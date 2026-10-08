@@ -16,19 +16,14 @@ class ShellTest(ShellCase):
 
     def test_a_typed_destructive_command_needs_an_explicit_yes(self):
         self.shell(answers=[""]).handle("fs.move --source a --dest b")
-        self.assertEqual((self.ran.calls, self.shown), ([], ["Not run."]))
-        self.assertIn("[y/N]", self.asked[0])
+        self.assertEqual((self.ran.calls, self.shown), ([], ["→ fs.move --source a --dest b", "Not run."]))
+        self.assertEqual(self.asked, ["It makes changes that cannot be undone. Run it? [y/N] "])
         self.shell(answers=["y"]).handle("fs.move --source a --dest b")
         self.assertEqual(self.ran.calls, [("fs.move", {"source": "a", "dest": "b"})])
 
     def test_nobody_to_ask_means_no(self):
         self.shell().handle("fs.move --source a --dest b")      # the question hits end of input
         self.assertEqual(self.ran.calls, [])
-
-    def test_anything_else_is_not_a_command_yet(self):
-        self.shell().handle("what is in this folder")
-        self.assertEqual(self.ran.calls, [])
-        self.assertIn("That is not a command. Type help", self.shown[0])
 
     def test_wrong_use_shows_how_to_type_it(self):
         self.shell().handle("fs.move --from a")
@@ -52,6 +47,8 @@ class ShellTest(ShellCase):
         shell.handle("help help nope")
         self.assertEqual(self.shown[-2:], ["help lists the commands. help NAME explains one and says what it may touch.",
                                            "There is no command named nope."])
+        shell.handle("help wrong needs forget stats exit")
+        self.assertEqual(len(self.shown), 9)
 
 
 class HelpTest(Folders):
@@ -87,6 +84,16 @@ class MainTest(Folders):
     def test_one_line_from_the_command_line(self):
         self.assertTrue(self.said("-c", "sys.status --what memory").startswith("Memory: "))
         self.assertEqual(self.said("-c", "note.add --text hello"), "Noted.\n")
+
+    def test_the_student_is_the_one_the_settings_name(self):
+        settings = self.root / "los.toml"
+        settings.write_text('[roles]\nstudent = "none-there"\n[providers.none-there]\nkind = "openai"\n'
+                            'url = "http://127.0.0.1:9/v1"\nmodel = "m"\n')
+        with mock.patch.dict("os.environ", {"LOS_CONFIG": str(settings)}):
+            self.assertIn("the student, which reads plain language, did not answer: no answer from http://127.0.0.1:9/v1",
+                          self.said("-c", "what is in this folder"))
+        with mock.patch.dict("os.environ", {"LOS_CONFIG": str(self.root / "missing.toml")}):
+            self.assertIn("no model is set up to read plain language", self.said("-c", "what is in this folder"))
 
     def test_it_says_so_when_commands_cannot_be_sandboxed(self):
         with mock.patch.object(sandbox, "unusable", lambda: "bubblewrap (the bwrap program) is not installed"):

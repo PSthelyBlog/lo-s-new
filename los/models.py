@@ -1,0 +1,160 @@
+"""Model providers.
+
+One contract for every provider: a system prompt, a user message and a JSON schema go in,
+and a dict comes out. `complete_valid` checks the dict against the schema and retries, so
+nothing here relies on a provider guaranteeing the shape of its output. Any provider can fill
+any role; `los.toml` says which does what.
+"""
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+
+class ModelUnavailable(Exception):
+    """The provider could not be reached at all, as opposed to answering badly."""
+
+
+class ClaudeCli:
+    """Runs the user's own `claude` program in print mode, with tools off and no session kept.
+    The login never leaves that program."""
+
+    provider = "claude-cli"
+
+    def __init__(self, model="claude-opus-5-5", effort="medium"):
+        self.model, self.effort = model, effort
+
+    def describe(self):
+        """How a program on this machine reaches this model, for a model that has to be told."""
+        return (f'{self.model}, reached by running the program: claude -p --safe-mode --model {self.model} '
+                '--tools "" --no-session-persistence, with the message on standard input and the answer on '
+                "standard output")
+
+    def complete(self, system, user, schema):
+        if not shutil.which("claude"):
+            raise ModelUnavailable("the claude program is not installed")
+        cmd = ["claude", "-p", "--safe-mode", "--model", self.model, "--effort", self.effort,
+               "--tools", "", "--no-session-persistence", "--output-format", "json",
+               "--system-prompt", system, "--json-schema", json.dumps(schema)]
+        start = time.time()
+        # A neutral directory, so no project instructions or memory reach the model. It is made for
+        # this call and removed after it, so nothing depends on a folder outliving a long session.
+        with tempfile.TemporaryDirectory(prefix="los-claude-") as cwd:
+            proc = subprocess.run(cmd, input=user, capture_output=True, text=True, cwd=cwd, timeout=300)
+        reply = json.loads(proc.stdout)
+        if reply.get("is_error"):
+            raise RuntimeError(reply.get("result"))
+        return reply["structured_output"], {
+            "seconds": round(time.time() - start, 2),
+            "output_tokens": reply.get("usage", {}).get("output_tokens"),
+        }
+
+
+class OpenAICompat:
+    """Any server that speaks the OpenAI chat API, llama.cpp's llama-server included.
+
+    Nothing is sent that turns the server's prompt cache off: it reuses the work it did on the
+    part of a prompt it has seen before, which is what makes a line take a second and not ten.
+    """
+
+    provider = "openai-compat"
+
+    def __init__(self, base_url, model, extra=None):
+        self.base_url, self.model, self.extra = base_url.rstrip("/"), model, extra or {}
+
+    def describe(self):
+        return f"{self.model}, behind the OpenAI chat API at {self.base_url}"
+
+    def complete(self, system, user, schema):
+        body = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0,
+            "seed": 1,
+            "max_tokens": 300,
+            "response_format": {"type": "json_schema",
+                                "json_schema": {"name": "output", "schema": schema, "strict": True}},
+            **self.extra,
+        }
+        request = urllib.request.Request(self.base_url + "/chat/completions", json.dumps(body).encode(),
+                                         {"Content-Type": "application/json"})
+        start = time.time()
+        try:
+            with urllib.request.urlopen(request, timeout=900) as response:
+                reply = json.load(response)
+        except urllib.error.HTTPError as error:  # the server answered, and refused the request
+            raise RuntimeError(f"{error.code} from {self.base_url}: {error.read().decode(errors='replace')[:300]}")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+            raise ModelUnavailable(f"no answer from {self.base_url} ({getattr(error, 'reason', error)})")
+        timings = reply.get("timings", {})
+        return json.loads(reply["choices"][0]["message"]["content"]), {
+            "seconds": round(time.time() - start, 2),
+            "output_tokens": reply.get("usage", {}).get("completion_tokens"),
+            "prompt_tokens": reply.get("usage", {}).get("prompt_tokens"),
+            "prompt_tokens_evaluated": timings.get("prompt_n"),
+            "prompt_tokens_per_second": timings.get("prompt_per_second"),
+            "output_tokens_per_second": timings.get("predicted_per_second"),
+        }
+
+
+def provider(settings):
+    """Build a provider from one [providers.NAME] table of los.toml."""
+    kind = settings["kind"]
+    if kind == "openai":
+        return OpenAICompat(settings["url"], settings["model"], settings.get("extra"))
+    if kind == "claude-cli":
+        return ClaudeCli(settings.get("model", "claude-opus-5-5"), settings.get("effort", "medium"))
+    raise ValueError(f"unknown provider kind {kind!r}")
+
+
+def validate(value, schema, path="$"):
+    """Check a value against the subset of JSON Schema this project uses. Returns the problems found."""
+    if "anyOf" in schema:
+        if any(not validate(value, option, path) for option in schema["anyOf"]):
+            return []
+        return [f"{path}: matches none of the allowed forms"]
+    if "const" in schema:
+        return [] if value == schema["const"] else [f"{path}: expected {schema['const']!r}"]
+    kind = schema.get("type")
+    if kind == "object":
+        if not isinstance(value, dict):
+            return [f"{path}: not an object"]
+        properties = schema.get("properties", {})
+        problems = [f"{path}: missing {key}" for key in schema.get("required", []) if key not in value]
+        if schema.get("additionalProperties") is False:
+            problems += [f"{path}: unexpected {key}" for key in value if key not in properties]
+        for key, sub in properties.items():
+            if key in value:
+                problems += validate(value[key], sub, f"{path}.{key}")
+        return problems
+    if kind == "array":
+        if not isinstance(value, list):
+            return [f"{path}: not an array"]
+        return [p for i, item in enumerate(value) for p in validate(item, schema.get("items", {}), f"{path}[{i}]")]
+    if kind == "string":
+        if not isinstance(value, str):
+            return [f"{path}: not a string"]
+        if "enum" in schema and value not in schema["enum"]:
+            return [f"{path}: {value!r} is not an allowed value"]
+    return []
+
+
+def complete_valid(model, system, user, schema, tries=3):
+    """Ask until the output validates. Returns (output, meta); meta records how many tries it took."""
+    problems = []
+    for attempt in range(1, tries + 1):
+        try:
+            output, meta = model.complete(system, user, schema)
+        except ModelUnavailable:
+            raise
+        except Exception as error:  # a failed call counts as a failed try
+            problems = [f"{type(error).__name__}: {error}"]
+            continue
+        problems = validate(output, schema)
+        if not problems:
+            meta["tries"] = attempt
+            return output, meta
+    raise RuntimeError(f"no valid output after {tries} tries: {problems}")

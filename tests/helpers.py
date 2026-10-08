@@ -62,11 +62,39 @@ TABLE = table(("fs.list", ["path", "sort_by"], "read"), ("note.add", ["text"], "
               ("fs.move", ["source", "dest"], "destructive"))
 
 
-class ShellCase(unittest.TestCase):
-    """A shell whose commands and user are both scripted."""
+class Scripted:
+    """A model that replays prepared outputs instead of thinking."""
 
-    def shell(self, answers=(), result=None, commands=TABLE):
+    provider = model = "scripted"
+
+    def __init__(self, *outputs):
+        self.outputs, self.calls = list(outputs), 0
+
+    def describe(self):
+        return "a scripted model"
+
+    def complete(self, system, user, schema):
+        self.calls += 1
+        self.system, self.user = system, user       # what it was last asked
+        output = self.outputs.pop(0)
+        if isinstance(output, Exception):
+            raise output
+        return output, {"seconds": 1.5}
+
+
+def call(command, **args):
+    return {"call": {"command": command, "args": args}}
+
+
+NONE = {"call": {"command": "none"}}
+
+
+class ShellCase(Folders):
+    """A shell whose commands, student and user are all scripted."""
+
+    def shell(self, *student_says, answers=(), result=None, commands=TABLE):
         self.shown, self.asked, self.ran = [], [], Ran(result)
+        self.student = Scripted(*student_says)
         replies = list(answers)
 
         def ask(question):
@@ -75,4 +103,4 @@ class ShellCase(unittest.TestCase):
                 raise EOFError
             return replies.pop(0)
 
-        return Shell(commands, ask, self.shown.append, self.ran)
+        return Shell(commands, ask, self.shown.append, self.ran, self.student)

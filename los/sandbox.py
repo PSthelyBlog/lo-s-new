@@ -63,17 +63,23 @@ class Grant:
     data_writable: bool = False
 
 
-def grant(command, args):
-    """Work out what this run may touch, from the manifest and the parameters the user gave."""
-    given, paths = {}, {}
+def complete(command, args):
+    """The parameters as the command will receive them: a path left out gets its default, and
+    every path is made absolute, from the current directory or the home folder."""
+    given = {}
     for name, param in command.params.items():
         value = args.get(name) or param.default
-        if not value:
-            continue
-        if param.path:
-            value = os.path.abspath(os.path.expanduser(value))
-            paths[value] = paths.get(value, False) or param.path == "write"
-        given[name] = value
+        if value:
+            given[name] = os.path.abspath(os.path.expanduser(value)) if param.path else value
+    return given
+
+
+def grant(command, args):
+    """Work out what this run may touch, from the manifest and the parameters the user gave."""
+    given, paths = complete(command, args), {}
+    for name, value in given.items():
+        if command.params[name].path:
+            paths[value] = paths.get(value, False) or command.params[name].path == "write"
     for path in command.reads:
         paths.setdefault(os.path.normpath(path), False)
     # The host's /proc shows every process of the user. The sandbox gets one of its own instead.

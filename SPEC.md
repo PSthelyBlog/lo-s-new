@@ -101,28 +101,41 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 
 ## Cases and the order of asking
 
-Not built yet.
-
-- **Proposed.** A case is one answered question: what was asked, the answer, who gave it (the
-  user, the student, the teacher, a rule) and what the user said about it. Cases are append-only
-  JSON lines. There are two kinds of question: which command a line means, and what a named
-  judgement inside a command comes to.
+- **Proposed.** A case is one answered question: what was asked, the answer, who gave it and what
+  the user said about it (accepted, declined or wrong). Cases are appended to
+  `state/cases.jsonl` and never changed. There are two kinds of question: which command a line
+  means, and what a named judgement inside a command comes to. Only the first is built.
 - **Proposed.** A typed line is handled in this order:
   1. It is one of the shell's own words.
-  2. It parses as a structured command.
+  2. It parses as a structured command. It runs as typed; a destructive one asks first.
   3. The user accepted a command for this exact line before. It is shown as remembered. A read
      command runs at once; anything else asks. This holds for as long as that command exists
      with those parameters, whatever other commands are installed.
   4. The student is asked, with its answer limited to one command and that command's
      parameters, or none. The typed form is shown. Enter accepts a read command; anything else
-     needs an explicit yes. Accepting records a confirmed case. Declining records nothing
-     lasting. `wrong` takes the latest answer back.
-  5. Nothing fits: the line is queued as a need.
+     needs an explicit yes. Accepting records a confirmed case. Declining settles nothing,
+     because the choice may be right and simply unwanted.
+  5. Nothing fits: the line is queued as a need. A need keeps its number for good.
+- **Proposed.** What is shown before a question is the command in full: a path left out is filled
+  in, and every path is absolute, with the home folder written as `~`. That line is what will
+  run and all that the command can touch. What is remembered is what was said, so a relative
+  path in a remembered line points wherever the user is when they type it again.
+- **Proposed.** `wrong` takes the latest choice back, whether it ran or not: the line is no longer
+  remembered that way, and the shell offers to queue it as a need.
+- **Proposed.** `stats` counts the lines memory answered and the lines the student answered, and
+  the model time memory saved.
 - **Proposed.** When a command is installed, remembered lines stay where they are. The ones
   closest to the new command are asked of the student again, as a suggestion only, and the user
-  chooses whether to move one.
-- **Open.** Whether showing the student the user's nearest confirmed lines as examples makes it
-  steadier. To be measured before anything is built on it.
+  chooses whether to move one. Not built yet: it belongs with installing.
+- **Proposed.** The student is not shown the user's confirmed lines as examples. It was measured
+  (`experiments/routing/`): with each line's three nearest confirmed lines shown, the student
+  picked the teacher's command exactly as often, was no steadier as commands were added, and
+  took 0.8 seconds longer over each line.
+- **Open.** A line the student finds nothing for is queued without a question, so a typing
+  mistake lands in the queue too. `forget` drops it.
+- **Open.** The student often picks the right command with a wrong value, such as `home` for the
+  home folder. The full form makes that visible before anything runs, but the user can only
+  decline. A way to say what the line does mean, which would settle it for good, is not built.
 
 ## The teacher step
 
@@ -154,14 +167,14 @@ Not built yet.
 
 ## Models
 
-Not built yet.
-
 - **Proposed.** One contract for every provider: a system prompt, a user message and a JSON schema
-  go in, and a validated dict comes out, with retries. Any provider can fill any role.
+  go in, and a validated dict comes out, with retries. Any provider can fill any role, and
+  `los.toml` says which fills which. There are two roles, `student` and `teacher`.
 - **Proposed.** Claude is reached only by running the user's own `claude` program, with tools off
   and no session kept. lo-s never touches the login.
 - **Proposed.** The student is served the simple way: one start, llama.cpp's own placement of the
-  weights, prompt cache on, each prompt laid out with the part that does not change first.
+  weights, prompt cache on (`scripts/serve.sh`). Each prompt is laid out with the part that does
+  not change first: the instructions, then the command table, then the line.
 
 ## Looking for improvements
 
@@ -181,7 +194,7 @@ Not built yet.
 
 ## Built so far
 
-Step 1 of five: the core, with no model.
+Steps 1 and 2 of five: the core, and plain language.
 
 - Manifests and the command table (`los/plugins.py`): parameters with hints, paths and defaults,
   fixed paths, the data folder, the effect, and the check that grants do not exceed it.
@@ -199,6 +212,19 @@ Step 1 of five: the core, with no model.
   nothing the user did not name.
 - A starter command takes about 41 ms from start to answer on the test machine (median of 20
   runs), against 36 ms for the same process without the sandbox. The rest is Python starting.
+- Providers and roles (`los/models.py`, `los.toml`), carried over from the first build. Only the
+  student is used so far.
+- Routing (`los/route.py`): the student is shown the instructions, the table and then the line,
+  and answers with one command and its own parameters, or none.
+- Cases and needs (`los/cases.py`): every answer to a plain-language line is recorded with what
+  the user said about it. An accepted line is answered from memory whatever else is installed.
+- In the shell: the order of asking, the full form before every question, `wrong`, `needs`,
+  `forget NUMBER` and `stats`.
+- `scripts/serve.sh` starts the student from a llama.cpp build and a model the user already has.
+- Tests use a scripted student and never call a real model.
+- Measured on the student (`experiments/routing/`), with the prompt cache on: a line takes about
+  a second whether the table holds 10, 50 or 200 commands, and the first line after the table
+  changes takes 2 to 9 seconds. Nearest confirmed lines did not clearly help and are left out.
 
 ## What the first build measured
 
