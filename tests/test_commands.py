@@ -2,8 +2,8 @@
 import os
 import time
 
-from los import plugins, sandbox, state
-from tests.helpers import Folders, needs_sandbox
+from los import cases, judge, plugins, sandbox, state
+from tests.helpers import Folders, Scripted, needs_sandbox
 
 TABLE, _ = plugins.load(state.ROOT / "plugins")
 
@@ -93,3 +93,21 @@ class NotesAndStatusTest(Folders):
         self.assertTrue(run("sys.status", what="cpu").startswith("CPU: load "))
         self.assertEqual(len(run("sys.status", what="all").splitlines()), len(run("sys.status").splitlines()))
         self.assertIsNone(run("sys.status", what="mood"))
+
+    def test_health_has_each_reading_judged_once_and_says_what_was_found(self):
+        def health(*student_says):
+            result = sandbox.run(TABLE["sys.health"], {}, minds=judge.Minds(Scripted(*student_says)))
+            self.assertFalse(result.broke, result.text)
+            return result.text
+
+        reading = r"memory \d+% free, of \d+ GB(; temperature -?\d+ °C)?"
+        self.assertRegex(health({"answer": "fine"}, {"answer": "fine"}), rf"^The machine looks healthy: {reading}\.$")
+        asked = cases.judgements()
+        self.assertEqual([case["question"]["name"] for case in asked], ["memory", "temperature"][:len(asked)])
+        self.assertEqual({(case["by"], tuple(case["question"]["choices"])) for case in asked}, {("student", ("fine", "worrying"))})
+        (state.directory() / "cases.jsonl").unlink()         # with nothing on record the student is asked again
+        self.assertRegex(health({"answer": "worrying"}, {"answer": "worrying"}), rf"^Worrying: {reading}\.$")
+        if len(asked) == 2:                                 # a machine with a temperature sensor
+            (state.directory() / "cases.jsonl").unlink()
+            self.assertRegex(health({"answer": "worrying"}, {"answer": "fine"}),
+                             r"^Worrying: memory \d+% free, of \d+ GB\. Fine: temperature -?\d+ °C\.$")

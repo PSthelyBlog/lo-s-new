@@ -15,6 +15,8 @@ process of its own (see sandbox.py), which is given what the manifest declares a
     reads = ["/proc"]                   # fixed paths it may read
     data = "write"                      # its plugin's data folder: read or write
     hosts = ["api.example.org"]         # hosts it may fetch from, through the core
+    judges = ["size"]                   # judgements it asks for, by name
+    asks = ["student"]                  # models it may put a question of its own to: student, teacher
 
     [commands.move.params]
     sort_by = "name, size or time"      # a hint, for whoever fills the value in
@@ -30,6 +32,10 @@ core. A default stands for a path left out, and can be built from other paramete
 The effect is a promise the sandbox keeps. A read command can change nothing. A write command
 can add: to its plugin's data folder, and a path it was given to create. Only a destructive
 command can change or remove what exists.
+
+A command reaches a model only through the core, and only as its manifest says. A judgement is a
+closed question: one of a few answers for one value. A question of its own is free text, to the
+student or to the teacher.
 """
 import ast
 import dataclasses
@@ -44,6 +50,7 @@ from .parse import flag
 
 EFFECTS = ("read", "write", "destructive")
 ACCESS = ("read", "create", "write")
+ROLES = ("student", "teacher")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 HOST = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
 
@@ -70,6 +77,8 @@ class Command:
     hosts: tuple = ()           # hosts it may fetch from
     source: pathlib.Path = None  # the commands.py that defines do_<verb>
     written_by: str = ""        # the model that wrote it, when one did
+    judges: tuple = ()          # the judgements it asks for, by name
+    asks: tuple = ()            # the models it may put a question of its own to
 
     @property
     def plugin(self):
@@ -126,9 +135,10 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: a verb is lower-case letters, digits and underscores")
     if not isinstance(entry, dict) or not isinstance(entry.get("params", {}), dict):
         raise ManifestError(f"{name} and its params are tables")
-    _only(entry, {"description", "effect", "reads", "data", "hosts", "params"}, name)
+    _only(entry, {"description", "effect", "reads", "data", "hosts", "judges", "asks", "params"}, name)
     description, effect = entry.get("description"), entry.get("effect", "read")
     reads, data, hosts = entry.get("reads", []), entry.get("data", ""), entry.get("hosts", [])
+    judges, asks = entry.get("judges", []), entry.get("asks", [])
     if not isinstance(description, str) or not description.strip():
         raise ManifestError(f"{name} needs a description")
     if effect not in EFFECTS:
@@ -139,6 +149,10 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: data is read or write, not {data!r}")
     if not isinstance(hosts, list) or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts):
         raise ManifestError(f"{name}: hosts is a list of host names such as api.example.org")
+    if not isinstance(judges, list) or not all(isinstance(one, str) and NAME.fullmatch(one) for one in judges):
+        raise ManifestError(f"{name}: judges is a list of names in lower-case letters, digits and underscores")
+    if not isinstance(asks, list) or not all(isinstance(one, str) and one in ROLES for one in asks):
+        raise ManifestError(f"{name}: asks is a list holding {' or '.join(ROLES)}")
     params = {key: _param(name, key, value) for key, value in entry.get("params", {}).items()}
     for key, param in params.items():   # a default may be built from other parameters, and from nothing else
         for _, field, spec, conversion in string.Formatter().parse(param.default):
@@ -160,7 +174,8 @@ def _command(plugin, verb, entry, functions, source, written_by):
     problem = _signature(functions.get(f"do_{verb}"), params)
     if problem:
         raise ManifestError(f"{name}: commands.py {problem.format(function=f'do_{verb}')}")
-    return Command(name, description, params, effect, tuple(reads), data, tuple(hosts), source, written_by)
+    return Command(name, description, params, effect, tuple(reads), data, tuple(hosts), source, written_by,
+                   tuple(judges), tuple(asks))
 
 
 def _param(name, key, value):
@@ -217,5 +232,14 @@ def touches(command):
                      f"the data lo-s keeps for the {command.plugin} commands.")
     if command.hosts:
         lines.append(f"It may fetch pages from {', '.join(command.hosts)}.")
-    return lines + ["It sees no other file of yours and " +
-                    ("reaches nothing else on the network." if command.hosts else "has no network.")]
+    lines.append("It sees no other file of yours and " +
+                 ("reaches nothing else on the network." if command.hosts else "has no network."))
+    if command.judges:
+        lines.append(f"It asks for a judgement of {', '.join(command.judges)}: one of a few answers for a value, "
+                     "from what is on record, a rule or the student. trace shows them.")
+    if "student" in command.asks:
+        lines.append("It may put a question of its own to the student.")
+    if "teacher" in command.asks:
+        lines.append("It may put a question of its own to the teacher. Each one is a call to it, and you are "
+                     "shown it and asked first.")
+    return lines

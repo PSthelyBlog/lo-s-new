@@ -4,6 +4,9 @@ One contract for every provider: a system prompt, a user message and a JSON sche
 and a dict comes out. `complete_valid` checks the dict against the schema and retries, so
 nothing here relies on a provider guaranteeing the shape of its output. Any provider can fill
 any role; `los.toml` says which does what.
+
+A caller that expects a long answer may pass `limit`, the most output tokens to allow. A provider
+that needs no telling ignores it.
 """
 import json
 import shutil
@@ -33,7 +36,7 @@ class ClaudeCli:
                 '--tools "" --no-session-persistence, with the message on standard input and the answer on '
                 "standard output")
 
-    def complete(self, system, user, schema):
+    def complete(self, system, user, schema, limit=None):
         if not shutil.which("claude"):
             raise ModelUnavailable("the claude program is not installed")
         cmd = ["claude", "-p", "--safe-mode", "--model", self.model, "--effort", self.effort,
@@ -71,13 +74,13 @@ class OpenAICompat:
     def describe(self):
         return f"{self.model}, behind the OpenAI chat API at {self.base_url}"
 
-    def complete(self, system, user, schema):
+    def complete(self, system, user, schema, limit=None):
         body = {
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0,
             "seed": 1,
-            "max_tokens": 300,
+            "max_tokens": limit or 300,
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "output", "schema": schema, "strict": True}},
             **self.extra,
@@ -145,12 +148,12 @@ def validate(value, schema, path="$"):
     return []
 
 
-def complete_valid(model, system, user, schema, tries=3):
+def complete_valid(model, system, user, schema, tries=3, limit=None):
     """Ask until the output validates. Returns (output, meta); meta records how many tries it took."""
-    problems = []
+    problems, more = [], {"limit": limit} if limit else {}
     for attempt in range(1, tries + 1):
         try:
-            output, meta = model.complete(system, user, schema)
+            output, meta = model.complete(system, user, schema, **more)
         except ModelUnavailable:
             raise
         except Exception as error:  # a failed call counts as a failed try

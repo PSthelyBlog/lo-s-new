@@ -18,6 +18,9 @@ A path bound into the sandbox can be read and changed in place, but not renamed 
 changes the folder around it, which the command does not hold. Giving it that folder would give
 it everything else in there too. So the core does it: `move` and `remove`, on paths the user
 named. `fetch` gets a page from a host the manifest lists, since the sandbox has no network.
+`judge` and `ask` are the one way to a model: a judgement the manifest names, or a question of
+the command's own to a model the manifest lists. Who answers is decided outside this module,
+by whatever started the run.
 
 Making something new works the other way round. For a path the command may create, it is given
 an empty scratch folder in place of the folder around that path. It builds the new thing there
@@ -49,6 +52,7 @@ BOOT = ("import json, socket, sys; channel = socket.socket(fileno=int(sys.argv[1
         "exec(compile(start['runner'], '<lo-s runner>', 'exec'), names); names['main'](channel, start)")
 ENVIRONMENT = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
 LARGEST = 2_000_000             # bytes of a page that fetch hands to a command
+LONGEST = 12_000                # characters of a question a command may put to a model
 OFFLINE = "the network is not used here"
 
 
@@ -74,6 +78,8 @@ class Grant:
     data_writable: bool = False
     hosts: tuple = ()       # hosts it may fetch from
     offline: bool = False   # True when this run is to stay off the network whatever the manifest says
+    run: str = ""           # what tells this run from every other, in the records
+    minds: object = None    # how a model is reached for this run: judge and ask (see judge.py), or nothing
 
 
 def complete(command, args, base=None):
@@ -112,12 +118,13 @@ def grant(command, args, base=None):
     return Grant(given, paths, creates, bool(proc), data, command.data == "write", command.hosts)
 
 
-def run(command, args, base=None, data=None, offline=False):
+def run(command, args, base=None, data=None, offline=False, minds=None):
     """Run a command with the parameters the user gave. Whatever the command does, the answer is
     a Result: nothing it raises reaches the shell.
 
     A trial run can be kept away from the user's things: `base` is the folder relative paths start
-    from, `data` stands in for the plugin's data folder, and `offline` refuses every fetch."""
+    from, `data` stands in for the plugin's data folder, and `offline` refuses every fetch.
+    `minds` answers what the command asks of a model; without it nothing can be asked."""
     in_the_open = os.environ.get("LOS_NO_SANDBOX") == "1"
     if not in_the_open and unusable():
         if command.written_by:
@@ -125,14 +132,17 @@ def run(command, args, base=None, data=None, offline=False):
                           f"{unusable()}. Set LOS_NO_SANDBOX=1 to run it with all of your permissions.", ok=False)
         in_the_open = True
     granted = grant(command, args, base)
-    granted.offline = offline
+    granted.offline, granted.minds = offline, minds
+    granted.run = datetime.datetime.now().isoformat(timespec="microseconds")
     if data and command.data:
         granted.data = str(data)
     stages = {}     # folder around a path to create -> the scratch folder that stands in for it
     try:
         if not in_the_open:
             _stage(granted, stages)
-        result = _converse(command, granted, stages, in_the_open)
+        start = {"code": command.source.read_text(), "file": f"{command.source.parent.name}/commands.py",
+                 "function": "do_" + command.verb, "args": granted.args, "data": granted.data or None}
+        result = _converse(start, granted, stages, in_the_open, lambda message: _answer(command, granted, message))
         lost = _keep(granted, stages) if result.ok else []
     except OSError as error:    # a scratch folder could not be made, or what was made could not be moved in
         return Result(f"{error.strerror}: {error.filename}" if error.filename else str(error), ok=False)
@@ -140,6 +150,18 @@ def run(command, args, base=None, data=None, offline=False):
         for stage in stages.values():
             shutil.rmtree(stage, ignore_errors=True)
     return dataclasses.replace(result, text="\n".join([result.text] + lost).strip("\n")) if lost else result
+
+
+def call(code, function, args, file="<code>"):
+    """Call one function of a piece of code in a sandbox that holds nothing: no path of the
+    user's, no data folder, no network, and nothing the core will do for it. For code that only
+    works something out, such as a rule. Code a model wrote does not run where there is no sandbox."""
+    in_the_open = os.environ.get("LOS_NO_SANDBOX") == "1"
+    if not in_the_open and unusable():
+        return Result(f"Code written by a model cannot be sandboxed here: {unusable()}.", ok=False)
+    start = {"code": code, "file": file, "function": function, "args": args, "data": None}
+    return _converse(start, Grant(args, {}), {}, in_the_open,
+                     lambda message: {"refused": "this code may not ask the core for anything"})
 
 
 def _stage(granted, stages):
@@ -166,11 +188,9 @@ def _keep(granted, stages):
     return lost
 
 
-def _converse(command, granted, stages, in_the_open):
-    """Start the process, hand it the command and answer what it asks until it says how it ended."""
-    start = {"runner": (INSIDE / "runner.py").read_text(), "api": (INSIDE / "api.py").read_text(),
-             "code": command.source.read_text(), "file": f"{command.source.parent.name}/commands.py",
-             "verb": command.verb, "args": granted.args, "data": granted.data or None}
+def _converse(start, granted, stages, in_the_open, answer):
+    """Start the process, hand it the code to run and answer what it asks until it says how it ended."""
+    start = {"runner": (INSIDE / "runner.py").read_text(), "api": (INSIDE / "api.py").read_text(), **start}
     ours, theirs = socket.socketpair()
     with ours, tempfile.TemporaryFile() as noise:    # noise: whatever the process writes outside the socket
         with theirs:
@@ -186,7 +206,7 @@ def _converse(command, granted, stages, in_the_open):
                 if not isinstance(message, dict) or "call" not in message:
                     end = message
                     break
-                _send(channel, _answer(command, granted, message))
+                _send(channel, answer(message))
         except (OSError, ValueError):       # the process went away mid-sentence, or sent something that is not JSON
             pass
         finally:                            # also on Ctrl-C: nothing is left running
@@ -269,9 +289,10 @@ def unusable():
 
 def _answer(command, granted, message):
     """Do what a command asked the core for, if its grant allows it, and record the request."""
-    asked = {key: value for key, value in message.items() if isinstance(value, str)}
+    asked = {key: value for key, value in message.items()
+             if isinstance(value, str) or (isinstance(value, list) and all(isinstance(one, str) for one in value))}
     try:
-        if asked.get("call") not in CALLS:
+        if not isinstance(asked.get("call"), str) or asked["call"] not in CALLS:
             raise Refused(f"the core has no call named {message.get('call')!r}")
         reply = {"value": CALLS[asked["call"]](command, granted, asked)}
     except Refused as refusal:
@@ -370,4 +391,38 @@ def _changeable(granted, path):
     raise Refused(f"{path} is not among the paths this command was given to change")
 
 
-CALLS = {"move": _move, "remove": _remove, "fetch": _fetch}
+def _judge(command, granted, asked):
+    """One of a few answers for one value, for a judgement the manifest names."""
+    name, question, value, choices = (asked.get(key) for key in ("name", "question", "value", "choices"))
+    if not isinstance(name, str) or name not in command.judges:
+        raise Refused(f"{command.name} may ask for a judgement of {', '.join(command.judges) or 'nothing'}, "
+                      f"and {name!r} is not that")
+    if not all(isinstance(text, str) and text.strip() for text in (question, value)):
+        raise Refused("a judgement needs a question and a value, both as text")
+    if not isinstance(choices, list) or not 2 <= len(choices) <= 12 or len(set(choices)) != len(choices) \
+            or not all(choice.strip() for choice in choices):
+        raise Refused("a judgement needs 2 to 12 different answers to choose from")
+    if len(question) > 500 or len(value) > 2000 or max(map(len, choices)) > 100:
+        raise Refused("a judgement takes a question of at most 500 characters, a value of at most 2000 and "
+                      "answers of at most 100")
+    if not granted.minds:
+        raise Refused("no model can be asked here")
+    return granted.minds.judge(command, granted.run, name, question, value, choices)
+
+
+def _ask(command, granted, asked):
+    """An answer in free text to a question of the command's own, from a model the manifest lists."""
+    to, message = asked.get("to"), asked.get("message")
+    if not isinstance(to, str) or to not in command.asks:
+        raise Refused(f"{command.name} may put a question to {' or '.join(command.asks) or 'no model'}, "
+                      f"and {to!r} is not that")
+    if not isinstance(message, str) or not message.strip():
+        raise Refused("a question needs some text")
+    if len(message) > LONGEST:
+        raise Refused(f"a question may be at most {LONGEST} characters, and this one has {len(message)}")
+    if not granted.minds:
+        raise Refused("no model can be asked here")
+    return granted.minds.ask(command, to, message)
+
+
+CALLS = {"move": _move, "remove": _remove, "fetch": _fetch, "judge": _judge, "ask": _ask}

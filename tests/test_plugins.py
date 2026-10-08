@@ -12,7 +12,11 @@ class PluginsTest(Folders):
     def test_starter_plugins_load(self):
         table, problems = plugins.load(state.ROOT / "plugins")
         self.assertEqual(problems, [])
-        self.assertEqual(set(table), {"fs.find", "fs.list", "fs.move", "fs.usage", "note.add", "note.list", "sys.status"})
+        # The folder also holds whatever the teacher wrote for this user. The starters are the rest.
+        self.assertEqual({name for name, command in table.items() if not command.written_by},
+                         {"fs.find", "fs.list", "fs.move", "fs.usage", "note.add", "note.list", "sys.health", "sys.status"})
+        self.assertEqual((table["sys.health"].judges, table["sys.health"].asks, table["sys.status"].judges),
+                         (("memory", "temperature"), (), ()))
         self.assertEqual((table["fs.move"].effect, table["note.add"].effect, table["fs.find"].effect),
                          ("destructive", "write", "read"))
         self.assertEqual(table["fs.list"].params["path"], plugins.Param("directory, default the current one", "read", "."))
@@ -38,6 +42,16 @@ class PluginsTest(Folders):
             "It may read what you give as --text.", "It may create what you give as --path, if nothing is there yet.",
             "It may fetch pages from api.example.org, example.org.",
             "It sees no other file of yours and reaches nothing else on the network."])
+
+    def test_a_manifest_says_which_models_a_command_reaches_and_what_for(self):
+        table, problems = self.plugin(manifest('judges = ["size", "age"]\nasks = ["student", "teacher"]'), CODE)
+        self.assertEqual((problems, table["x.go"].judges, table["x.go"].asks), ([], ("size", "age"), ("student", "teacher")))
+        self.assertEqual(plugins.touches(table["x.go"])[1:], [
+            "It sees no other file of yours and has no network.",
+            "It asks for a judgement of size, age: one of a few answers for a value, from what is on record, a rule or "
+            "the student. trace shows them.",
+            "It may put a question of its own to the student.",
+            "It may put a question of its own to the teacher. Each one is a call to it, and you are shown it and asked first."])
 
     def test_a_command_written_by_a_model_says_so(self):
         table, _ = self.plugin(manifest() + '[origin]\nwritten_by = "some-model"\n', CODE)
@@ -68,6 +82,8 @@ class PluginsTest(Folders):
                        "is not one"),
             "hosts": (manifest('hosts = ["https://example.org/x"]'), CODE, "hosts is a list of host names"),
             "reads": (manifest('reads = ["proc"]'), CODE, "reads is a list of absolute paths"),
+            "judges": (manifest('judges = ["How big?"]'), CODE, "judges is a list of names in lower-case letters"),
+            "asks": (manifest('asks = ["student", "oracle"]'), CODE, "asks is a list holding student or teacher"),
             "missing": (manifest(), "def do_other():\n    pass\n", "does not define do_go"),
             "params": (manifest(), "def do_go(path=None):\n    pass\n", "exactly the declared parameters: path, text"),
             "defaults": (manifest(), "def do_go(path, text=None):\n    pass\n", "must give every parameter of do_go a default"),

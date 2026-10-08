@@ -7,7 +7,7 @@ import shutil
 import urllib.request
 from unittest import mock
 
-from los import cases, plugins, sandbox, state, teach
+from los import cases, judge, plugins, sandbox, state, teach
 from los.models import ModelUnavailable
 from los.shell import Shell
 from tests.helpers import NONE, Folders, Scripted, call, needs_sandbox
@@ -99,6 +99,30 @@ def do_forecast(place=None):
     "others": [{"line": "is the laptop running hot", "command": "sys.status"}],
     "checks": [{"args": [], "expect": "error", "contains": ["--place"]},
                {"args": args(place="Lyon"), "expect": "output", "contains": ["°C"]}],
+}
+
+
+CHAT = {
+    "plugin": "chat", "verb": "ask", "effect": "read", "asks": ["student", "teacher"], "judges": ["tone"],
+    "descriptions": ["Put a question to the student or the teacher; only for lines that name one of them"],
+    "params": [{"name": "to", "hint": "student or teacher"}, {"name": "message", "hint": "the question"}],
+    "code": '''"""Put a question to one of the models."""
+from los import CommandError, ask, judge
+
+
+def do_ask(to=None, message=None):
+    if not message:
+        raise CommandError("Give the question with --message.")
+    if to == "tone":
+        return judge("tone", "Is this message polite or curt?", message, ["polite", "curt"])
+    return ask(to or "student", message)
+''',
+    "lines": [{"line": "ask the student what a mutex is", "args": args(to="student", message="what is a mutex")}],
+    "others": [{"line": "what is a mutex", "command": "none"}],
+    "checks": [{"args": [], "expect": "error", "contains": ["--message"]},
+               {"args": args(to="student", message="what is a mutex"), "expect": "output", "contains": []},
+               {"args": args(to="teacher", message="what is a mutex"), "expect": "output", "contains": []},
+               {"args": args(to="tone", message="Do it now."), "expect": "output", "contains": ["curt"]}],
 }
 
 
@@ -228,6 +252,24 @@ class ProposalTest(Case):
             self.assertEqual([problem for _, problem in (teach.check(command, wanted, False) for wanted in WEATHER["checks"])],
                              ["", "was not run: it needs the network."])
         opened.assert_not_called()
+
+    def test_a_proposal_may_ask_for_judgements_and_put_questions_to_a_model(self):
+        found = self.staged(CHAT)
+        self.assertEqual((found.fault, found.command.asks, found.command.judges), ("", ("student", "teacher"), ("tone",)))
+        self.assertIn('judges = ["tone"]\nasks = ["student", "teacher"]\n', (found.folder / "plugin.toml").read_text())
+        self.assertIn("ask(to, message), from los, returns the answer as text.", teach.BRIEF)
+        self.assertIn("judge(name, question, value, choices), from los, returns the one of choices", teach.BRIEF)
+
+    def test_a_check_reaches_the_student_and_never_the_teacher_and_leaves_no_record(self):
+        command, student = self.staged(CHAT).command, Scripted({"answer": "A lock."}, {"answer": "curt"})
+        self.teacher.outputs = [{"answer": "never asked"}]
+        minds = judge.Minds(student, self.teacher, lambda question, default: True).trial()
+        self.assertEqual([teach.check(command, wanted, True, minds) for wanted in CHAT["checks"]],
+                         [("chat.ask", ""), ("chat.ask --to student --message 'what is a mutex'", ""),
+                          ("chat.ask --to teacher --message 'what is a mutex'", "was not run: it would call the teacher."),
+                          ("chat.ask --to tone --message 'Do it now.'", "")])
+        self.assertEqual((self.teacher.calls, student.calls, cases.judgements(), state.read("asks")), (0, 2, [], []))
+        self.assertIn("no model can be asked here", teach.check(command, CHAT["checks"][1], True)[1])
 
     def test_each_description_is_tried_on_the_student_and_the_best_comes_first(self):
         command = self.staged(DELETE).command

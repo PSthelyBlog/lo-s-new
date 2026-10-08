@@ -16,6 +16,10 @@ absolute. That line is what will run and all that the command can touch.
 `delegate` is for what no command does yet, or for a user who does not know what to type: they
 say what they need, and the teacher answers with a command to run, a new command, a question or
 the news that lo-s cannot do it. `means` is the user saying themselves what a line means.
+
+A command may ask for a judgement while it runs. `trace` shows the judgements of the latest run
+and where each answer came from, and lets the user set one. `rule` has the teacher turn the
+answers on record for one judgement into code.
 """
 import argparse
 import datetime
@@ -25,7 +29,7 @@ import shutil
 import statistics
 import tomllib
 
-from . import cases, plugins, route, sandbox, state, teach
+from . import cases, judge, plugins, route, rules, sandbox, state, teach
 from .models import ModelUnavailable, provider
 from .parse import UsageError, flag, parse, render, usage
 
@@ -40,8 +44,13 @@ BUILTINS = {
     "delegate": "delegate WHAT YOU NEED, in your own words, asks the teacher what to do about it: run a command "
                 "that exists, install a new one that it writes, or neither. delegate NUMBER does that for a queued "
                 "need. You see its answer, and what a new command may touch, before anything happens.",
+    "trace": "trace shows the judgements the latest command asked for, and where each answer came from: what is on "
+             "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on.",
+    "rule": "rule COMMAND NAME asks the teacher to turn the answers on record for one judgement into a small "
+            "function. It is tried on every one of them, and you see it before it is used. From then on that "
+            "judgement asks the rule before the student.",
     "stats": "stats shows how many plain-language lines memory, the student and the teacher answered, the model "
-             "time memory saved, and how many calls the teacher got.",
+             "time memory saved, who made the judgements commands asked for, and how many calls the teacher got.",
     "exit": "exit leaves the shell.",
 }
 CARE = {
@@ -58,6 +67,7 @@ class Shell:
     def __init__(self, table, ask=input, out=print, run=sandbox.run, student=None, teacher=None, plugin_dir=None):
         self.table, self.ask, self.out, self.runner, self.student = table, ask, out, run, student
         self.teacher, self.plugin_dir = teacher, plugin_dir
+        self.minds = judge.Minds(student, teacher, self.confirm)    # what a running command reaches a model through
         self.said = None    # the latest plain-language line, so that `means` can settle it
         self.last = None    # that line and the command chosen for it, so that `wrong` can take the choice back
 
@@ -83,6 +93,10 @@ class Shell:
             self.forget(words[1:])
         elif line == "stats":
             self.stats()
+        elif words[0] == "trace":
+            self.trace(words[1:])
+        elif words[0] == "rule":
+            self.rule(words[1:])
         else:
             try:
                 parsed = parse(line, self.table)
@@ -320,7 +334,7 @@ class Shell:
         online = not command.hosts or self.confirm(
             f"Its checks would fetch from {', '.join(command.hosts)}. Let them?", default=False)
         self.out(f"Running {len(checks)} check(s) of {command.name} in the sandbox.")
-        found.checks = [teach.check(command, wanted, online) for wanted in checks]
+        found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
         if not self.student:
             found.untried = "No model is set up as the student."
             return
@@ -381,19 +395,128 @@ class Shell:
         # What memory saved is counted at the student's usual time for a line. The time a line
         # took when it was first asked may include working out the whole table.
         usual = statistics.median(took) if took else 0
-        calls = state.read("delegations")
-        failed = sum("failed" in call for call in calls)
+        # Every call to the teacher, whoever asked for it: delegate, rule, or a command with a question of its own.
+        calls = {"by delegate": state.read("delegations"), "for rules": state.read("rule_calls"),
+                 "by commands": [asked for asked in state.read("asks") if asked["to"] == "teacher"]}
+        failed = sum("failed" in call for kind in calls.values() for call in kind)
+        judged = cases.judgements()
+        made = {source: [case for case in judged if case.get("run") and case["by"] == source]
+                for source in ("memory", "rule", "student")}
         self.out(f"Plain-language lines: {len(by['memory']) + len(by['student'])}\n"
                  f"Answered from memory: {len(by['memory'])}, saving about {len(by['memory']) * usual:.1f} s of model time\n"
                  f"Answered by the student: {len(by['student'])}, taking {sum(took):.1f} s "
                  f"({told['accepted']} accepted, {told['declined']} declined, {told['']} where nothing fitted)\n"
                  f"Settled by you with means: {sum(case['verdict'] == 'accepted' for case in by['user'])}\n"
-                 f"Taken back with wrong: {sum(case['verdict'] == 'wrong' for case in by['user'])}\n"
-                 f"Calls to the teacher: {len(calls)}" + (f", of which {failed} gave no answer" if failed else "") + "\n"
+                 f"Taken back with wrong: {sum(case['verdict'] == 'wrong' for case in by['user'])}\n" +
+                 (f"Judgements inside commands: {sum(map(len, made.values()))} ({len(made['memory'])} from the record, "
+                  f"{len(made['rule'])} by a rule, {len(made['student'])} by the student, taking "
+                  f"{sum(case.get('seconds') or 0 for case in made['student']):.1f} s)\n"
+                  f"Set by you with trace: {sum(case['by'] == 'user' for case in judged)}\n" if judged else "") +
+                 f"Calls to the teacher: {sum(map(len, calls.values()))}" +
+                 (f", of which {failed} gave no answer" if failed else "") +
+                 (" (" + ", ".join(f"{len(kind)} {how}" for how, kind in calls.items()) + ")"
+                  if calls["for rules"] or calls["by commands"] else "") + "\n"
                  f"Needs waiting: {len(cases.waiting())}")
 
+    def trace(self, words):
+        """Show the judgements the latest run asked for and where each answer came from, or set
+        one of them as the user's own."""
+        asked = cases.latest_run()
+        if not asked:
+            self.out("No command has asked for a judgement yet.")
+            return
+        if words:
+            case = asked[int(words[0]) - 1] if words[0].isdigit() and 1 <= int(words[0]) <= len(asked) else None
+            answer = " ".join(words[1:])
+            if not case or answer not in case["question"]["choices"]:
+                self.out("Usage: trace NUMBER ANSWER, with a number that trace lists" +
+                         (f" and one of that judgement's answers: {' or '.join(case['question']['choices'])}."
+                          if case else " and one of that judgement's answers."))
+                return
+            question = case["question"]
+            cases.record("judgement", question, answer, "user", "accepted")
+            self.out(f"Set: {question['command']} takes {question['name']} of {question['value']} as {answer} from now on." +
+                     (f"\nA rule said {case['answer']}. Your answer comes first for this value. If the rule is wrong "
+                      f"more widely, rule {question['command']} {question['name']} makes a new one from the record."
+                      if case["by"] == "rule" and case["answer"] != answer else ""))
+            return
+        self.out(f"{asked[0]['question']['command']} asked for {len(asked)} judgement(s) the last time it needed any:")
+        for number, case in enumerate(asked, 1):
+            question, now = case["question"], cases.judged(case["question"])
+            how = {"student": f"the student, {case.get('seconds') or 0:.1f} s", "rule": "a rule",
+                   "memory": "on record, set by you" if case.get("source") == "user" else "on record, from the student"}
+            self.out(f"{number}. {question['name']} of {question['value']}: {case['answer']}  ({how[case['by']]})" +
+                     (f"; you have since set it to {now['answer']}" if now and now["answer"] != case["answer"] else ""))
+        other = next(choice for choice in asked[0]["question"]["choices"] if choice != asked[0]["answer"])
+        self.out(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}.")
+
+    def rule(self, words):
+        """Have the teacher turn the answers on record for one judgement into a rule, try it on
+        every one of them, and use it if the user agrees. Every pass through the loop is one call."""
+        command = self.table.get(words[0]) if len(words) == 2 else None
+        if not command or words[1] not in command.judges:
+            known = [f"{name} {one}" for name in sorted(self.table) for one in self.table[name].judges]
+            self.out("Usage: rule COMMAND NAME, for a judgement a command asks for" +
+                     (f": {', '.join(known)}." if known else ". No command here asks for one."))
+            return
+        name = words[1]
+        if not self.teacher:
+            self.out("No model is set up as the teacher. Give the teacher role a provider in los.toml.")
+            return
+        if os.environ.get("LOS_NO_SANDBOX") != "1" and sandbox.unusable():
+            self.out(f"A rule is code a model writes, and it cannot be sandboxed here: {sandbox.unusable()}. "
+                     "Set LOS_NO_SANDBOX=1 to have rules run with all of your permissions.")
+            return
+        try:
+            question, choices, listed = rules.recorded(command.name, name)
+        except rules.Unsuitable as reason:
+            self.out(f"No rule for {name} in {command.name} yet: {reason}.")
+            return
+        (shown, held), earlier = rules.split(listed), None
+        current = rules.installed().get((command.name, name))
+        if current:
+            self.out(f"A rule for it is in use already, made from {current['cases']} answers on {current['date']}. "
+                     "A new one would take its place.")
+        while True:
+            self.out(f"Asking {self.teacher.model}{' again' if earlier else ''} for a rule from {len(shown)} answer(s) "
+                     f"on record for {name} in {command.name}. {len(held)} more are held back to test it.")
+            record = {"date": datetime.date.today().isoformat(), "command": command.name, "name": name,
+                      "model": self.teacher.model}
+            try:
+                output, meta = rules.ask(self.teacher, command, name, question, choices, shown, earlier)
+            except (ModelUnavailable, RuntimeError) as error:
+                state.append("rule_calls", {**record, "failed": str(error)})
+                self.out(f"No rule came back: {error}")
+                return
+            state.append("rule_calls", {**record, "seconds": meta.get("seconds"), "answer": output})
+            reason = " ".join(output["reason"].split())
+            if output["decision"] == "decline":
+                self.out(f"It declined: {reason}")
+                return
+            code = output["code"].rstrip()
+            problems, answered = rules.check(code), 0
+            if not problems:
+                self.out(f"Trying it on all {len(listed)} in the sandbox.")
+                problems, answered = rules.failures(code, shown, held)
+            if not problems:
+                break
+            self.out(f"{code}\n\nWhy: {reason}\nThis rule cannot be used:\n" + "\n".join(f"  - {problem}" for problem in problems))
+            if not self.confirm(f"Have {self.teacher.model} put it right? That is one more call to it.", default=False):
+                self.out("Not installed. What it wrote is kept in the state folder, in rule_calls.jsonl.")
+                return
+            earlier = (code, problems)
+        self.out(f"{code}\n\nWhy: {reason}\nIt gives the answer on record for all {len(shown)} it was shown. Of the "
+                 f"{len(held)} held back, it gives the answer on record for {answered} and leaves {len(held) - answered} "
+                 "to the student.")
+        if not self.confirm(f"Use this rule for {name} in {command.name}?", default=False):
+            self.out("Not installed. What it wrote is kept in the state folder, in rule_calls.jsonl.")
+            return
+        path = rules.install(command.name, name, question, choices, code, self.teacher, len(listed))
+        self.out(f"Installed. {command.name} now asks the rule for {name} before the student, and the student only "
+                 f"when the rule has no answer.\nDelete {path} to remove it.")
+
     def run(self, command, args):
-        result = self.runner(command, args)
+        result = self.runner(command, args, minds=self.minds)
         if result.broke:
             self.out(f"{command.name} broke. The fault is in the command, not in what you typed.\n{result.text}")
         elif not result.ok:
@@ -416,9 +539,10 @@ class Shell:
                      "command that fits is shown before it runs. A line you accepted is remembered. wrong\n"
                      "takes the latest choice back, and means COMMAND says what the line does mean.\n"
                      "delegate WHAT YOU NEED asks the teacher, which can write a new command; needs lists\n"
-                     "what nothing could do yet, and forget NUMBER drops one. stats counts who answered.\n"
-                     "help NAME explains a command and says what it may touch; each runs in a sandbox that\n"
-                     "holds only that. exit leaves.")
+                     "what nothing could do yet, and forget NUMBER drops one. trace shows the judgements\n"
+                     "the latest command asked for, and rule COMMAND NAME has the teacher turn one into\n"
+                     "code. stats counts who answered. help NAME explains a command and says what it may\n"
+                     "touch; each runs in a sandbox that holds only that. exit leaves.")
             return
         for name in names:
             if name in BUILTINS:
@@ -431,7 +555,10 @@ class Shell:
             width = max((len(flag(key)) for key in command.params), default=0)
             self.out("\n".join([command.description, f"Usage: {usage(command)}"] +
                                [f"  {flag(key):{width}}  {param.hint}" for key, param in command.params.items()]))
-            self.out("\n".join([CARE[command.effect]] + plugins.touches(command)))
+            in_force = rules.installed()
+            self.out("\n".join([CARE[command.effect]] + plugins.touches(command) + [
+                f"A rule answers {one} where it can, made from {in_force[command.name, one]['cases']} answers on "
+                f"{in_force[command.name, one]['date']}." for one in command.judges if (command.name, one) in in_force]))
 
 
 def main(argv=None):

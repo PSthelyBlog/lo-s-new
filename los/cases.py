@@ -3,7 +3,7 @@
 A case is one answered question: what was asked, the answer, who gave it and what the user said
 about it. Cases are appended to `state/cases.jsonl` and never changed. A case the user accepted
 is a fact: the same question is answered from it and no model is asked. Everything else a case
-holds is kept for what can be built from it later.
+holds is kept for what can be built from it later. There are two kinds of question.
 
     kind        line: which command a typed line means
     question    the line
@@ -11,6 +11,13 @@ holds is kept for what can be built from it later.
     by          student or teacher, memory when an accepted case answered, or user for what the
                 user said themselves: a choice taken back, or what a line means
     verdict     accepted, declined (it may be right and was not wanted), wrong, or empty
+
+    kind        judgement: what a named judgement inside a command comes to for one value
+    question    {"command": NAME, "name": ..., "ask": the question, "choices": [...], "value": ...}
+    answer      one of the choices
+    by          student, rule, memory when a recorded answer was used again, or user for an
+                answer the user set themselves
+    run         the run of the command it was asked in; a user's answer belongs to no run
 """
 import datetime
 
@@ -50,6 +57,33 @@ def taken_back(line, answer):
         if (case["kind"], case["question"], case["answer"]) == ("line", line, answer) and case["verdict"] in ("accepted", "wrong"):
             wrong = case["verdict"] == "wrong"
     return wrong
+
+
+def judged(asked):
+    """The answer on record for exactly this question and value: the one the user set if they
+    set one, otherwise what the student said. Returns that case, or nothing.
+
+    What a rule answered is not a case to answer from. It is worked out again each time, so that
+    removing a rule removes its answers with it."""
+    found = None
+    for case in state.read("cases"):
+        if case["kind"] == "judgement" and case["question"] == asked and case["by"] in ("user", "student") \
+                and (case["by"] == "user" or not found or found["by"] != "user"):
+            found = case
+    return found
+
+
+def judgements(command=None, name=None):
+    """Every judgement case on record, or those of one command, or of one judgement in it."""
+    return [case for case in state.read("cases")
+            if case["kind"] == "judgement" and command in (None, case["question"]["command"])
+            and name in (None, case["question"]["name"])]
+
+
+def latest_run():
+    """The judgements of the latest run that asked for any, in the order they were asked."""
+    asked = [case for case in judgements() if case.get("run")]
+    return [case for case in asked if case["run"] == asked[-1]["run"]]
 
 
 def _trigrams(text):

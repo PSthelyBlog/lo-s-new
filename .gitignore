@@ -4,6 +4,10 @@ state/
 # The brief this build started from; it is not part of the project
 PROMPT.md
 
+# Commands the teacher wrote for whoever uses this copy. Each lives in a folder named
+# plugin.verb and holds the words it was written for, which are the user's own.
+plugins/*.*/
+
 # Python
 __pycache__/
 *.pyc

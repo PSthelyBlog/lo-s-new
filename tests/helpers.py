@@ -47,7 +47,7 @@ class Ran:
     def __init__(self, result=None):
         self.calls, self.result = [], result
 
-    def __call__(self, command, args):
+    def __call__(self, command, args, minds=None):
         self.calls.append((command.name, args))
         return self.result or sandbox.Result(f"ran {command.name}")
 
@@ -73,9 +73,9 @@ class Scripted:
     def describe(self):
         return "a scripted model"
 
-    def complete(self, system, user, schema):
+    def complete(self, system, user, schema, limit=None):
         self.calls += 1
-        self.system, self.user = system, user       # what it was last asked
+        self.system, self.user, self.schema, self.limit = system, user, schema, limit   # what it was last asked
         output = self.outputs.pop(0)
         if isinstance(output, Exception):
             raise output

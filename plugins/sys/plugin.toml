@@ -6,3 +6,10 @@ description = "Show battery, CPU, memory or temperature status"
 reads = ["/proc", "/sys"]
 [commands.status.params]
 what = "battery, cpu, memory or temperature; default all"
+
+# Whether a reading is worrying is a judgement, not something this code works out. Each reading
+# is put to lo-s with judge(), which answers from what is on record, a rule or the student.
+[commands.health]
+description = "Say in one line whether the machine looks healthy"
+reads = ["/proc", "/sys"]
+judges = ["memory", "temperature"]

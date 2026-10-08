@@ -436,6 +436,14 @@ class WithoutBubblewrapTest(Folders):
         with mock.patch.dict(os.environ, {"LOS_NO_SANDBOX": "1"}):
             self.assertEqual(sandbox.run(self.table["learnt.read"], args).text, "True")
 
+    def test_code_that_only_works_something_out_does_not_run_either_unless_the_user_says_so(self):
+        rule = "def rule(value):\n    return 'fine'\n"
+        result = sandbox.call(rule, "rule", {"value": "40 °C"})
+        self.assertEqual((result.ok, result.text), (False, "Code written by a model cannot be sandboxed here: bubblewrap "
+                                                           "(the bwrap program) is not installed."))
+        with mock.patch.dict(os.environ, {"LOS_NO_SANDBOX": "1"}):
+            self.assertEqual(sandbox.call(rule, "rule", {"value": "40 °C"}).text, "fine")
+
     def test_the_core_still_checks_what_it_is_asked(self):
         target = self.files / "a.txt"
         target.write_text("a")

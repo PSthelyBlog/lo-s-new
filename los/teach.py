@@ -18,7 +18,7 @@ import pathlib
 import shutil
 import tempfile
 
-from . import plugins, route, sandbox, state
+from . import judge, plugins, route, sandbox, state
 from .models import complete_valid
 from .parse import flag, render
 
@@ -98,8 +98,23 @@ DATA (from los import DATA), for what it keeps between runs.
 https GET to a listed host. Anything else is refused, and there is no other network. List only \
 the hosts the command needs for what the user asked. Never contact a service to find out where \
 the user is or who they are: take a place or a name as a parameter.
-- Nothing else exists yet. A command cannot run a program outside the sandbox, send mail, open \
-a window or ask a model. If the need takes one of those, answer cannot and say what is missing.
+- judges: the names of the judgements the command asks for. judge(name, question, value, \
+choices), from los, returns the one of choices that fits value. It is for a judgement that no \
+code can make, such as whether a reading is worrying, and never for what code can work out. \
+lo-s answers from what it has on record for that exact value, then from a rule if one was made, \
+and asks the student last. The user can see every answer and set one themselves. Keep question \
+and choices fixed text, and value short and regular, such as a number with its unit, so that \
+the same value comes round again. No check can know what will be answered, so let none depend \
+on it.
+- asks: "student", "teacher" or both: the models the command may put a question of its own to. \
+ask(to, message), from los, returns the answer as text. It is for a command whose whole purpose \
+is to consult a model, such as one that puts the user's question to the student, and not a way \
+to have a model do a command's work. Such a command is for lines that name the model, and its \
+description must say so, or it becomes a catch-all. The user is shown every question to the \
+teacher and asked before it is sent, because each is a call they count. In a check a question to \
+the student is answered and one to the teacher is not sent.
+- Nothing else exists yet. A command cannot run a program outside the sandbox, send mail or \
+open a window. If the need takes one of those, answer cannot and say what is missing.
 
 Effect. read: it changes nothing; it may have read paths and read its data. write: it adds \
 something and changes nothing that exists; it may also have create paths and write its data. \
@@ -117,7 +132,8 @@ name must not be one in the table.
 
 What to give in write.
 - plugin, verb, effect, code, and params: each with name and hint, and for a path also path \
-and, when there is one, default. reads, data and hosts only when the command needs them.
+and, when there is one, default. reads, data, hosts, judges and asks only when the command \
+needs them.
 - descriptions: two or three candidate descriptions of one sentence each, worded differently. \
 The student sees nothing but the table, so the description and the hints are all it goes by. \
 Say what the command is for in words a user would use. Where another command is close, say what \
@@ -164,6 +180,8 @@ SCHEMA = {
                 "reads": {"type": "array", "items": TEXT},
                 "data": {"type": "string", "enum": ["", "read", "write"]},
                 "hosts": {"type": "array", "items": TEXT},
+                "judges": {"type": "array", "items": TEXT},
+                "asks": {"type": "array", "items": {"type": "string", "enum": list(plugins.ROLES)}},
                 "code": TEXT,
                 "lines": _things(["line", "args"], line=TEXT, args=ARGS),
                 "others": _things(["line", "command"], line=TEXT, command=TEXT),
@@ -271,7 +289,8 @@ def manifest(proposal, description, words, teacher):
             f"provider = {quoted(teacher.provider)}", f"date = {quoted(datetime.date.today().isoformat())}", "",
             f"[commands.{proposal['verb']}]", f"description = {quoted(description)}",
             f"effect = {quoted(proposal['effect'])}"]
-    rows += [f"{key} = [{', '.join(map(quoted, proposal[key]))}]" for key in ("reads", "hosts") if proposal.get(key)]
+    rows += [f"{key} = [{', '.join(map(quoted, proposal[key]))}]" for key in ("reads", "hosts", "judges", "asks")
+             if proposal.get(key)]
     rows += [f"data = {quoted(proposal['data'])}"] if proposal.get("data") else []
     rows.append(f"[commands.{proposal['verb']}.params]")
     for param in proposal["params"]:
@@ -318,9 +337,10 @@ def _inside(path):
     return bool(path) and not os.path.isabs(path) and not path.startswith("~") and ".." not in pathlib.PurePath(path).parts
 
 
-def check(command, wanted, online):
+def check(command, wanted, online, minds=None):
     """Run one of a proposal's checks in the sandbox, in an empty folder made for it. Returns
-    (what was run, what went wrong), the second empty when the check passed."""
+    (what was run, what went wrong), the second empty when the check passed. `minds` answers what
+    the command asks of a model, in the way of a trial: nothing recorded, the teacher not called."""
     args = _args(wanted["args"])
     what = render(command.name, args)
     paths = [file["path"] for file in wanted.get("files", [])] + [after["path"] for after in wanted.get("then", [])]
@@ -339,11 +359,13 @@ def check(command, wanted, online):
             if not file["path"].endswith("/"):
                 place.write_text(file["content"])
         (folder / "data").mkdir()
-        result = sandbox.run(command, args, base=str(work), data=str(folder / "data"), offline=not online)
+        result = sandbox.run(command, args, base=str(work), data=str(folder / "data"), offline=not online, minds=minds)
         said = " ".join(result.text.split())
         said = said if len(said) <= 300 else said[:300] + " ..."
         if sandbox.OFFLINE in result.text:
             return what, "was not run: it needs the network."
+        if judge.TRIAL in result.text:
+            return what, "was not run: it would call the teacher."
         if result.broke:
             return what, f"broke the command: {said}"
         if wanted["expect"] == "output" and not result.ok:

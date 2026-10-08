@@ -1,9 +1,9 @@
-"""What runs inside the sandbox: load one command's code, call it, and say how it ended.
+"""What runs inside the sandbox: load one piece of code, call one function of it, and say how it ended.
 
 The core starts a fresh Python process and hands it one socket. The first line on the socket
-carries this file, the module commands import as `los`, the command's code and its parameters.
-`main` gets the socket as a text file and that first line. It answers with one line: what the
-command returned, why it refused, or how it broke.
+carries this file, the module commands import as `los`, the code, the function to call and its
+parameters. `main` gets the socket as a text file and that first line. It answers with one line:
+what the function returned, why it refused, or how it broke.
 
 Nothing here is trusted by the core. Whatever a command asks for is checked on the other side.
 """
@@ -39,7 +39,7 @@ def main(channel, start):
     try:
         with contextlib.redirect_stdout(printed):   # a command returns its text; what it prints is kept too
             exec(compile(code, file, "exec"), module.__dict__)
-            value = getattr(module, "do_" + start["verb"])(**start["args"])
+            value = getattr(module, start["function"])(**start["args"])
         tell({"returned": printed.getvalue() + ("" if value is None else str(value))})
     except api.CommandError as error:
         tell({"failed": str(error)})

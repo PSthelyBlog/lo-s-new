@@ -47,8 +47,8 @@ class ShellTest(ShellCase):
         shell.handle("help help nope")
         self.assertEqual(self.shown[-2:], ["help lists the commands. help NAME explains one and says what it may touch.",
                                            "There is no command named nope."])
-        shell.handle("help wrong means needs forget delegate stats exit")
-        self.assertEqual(len(self.shown), 11)
+        shell.handle("help wrong means needs forget delegate trace rule stats exit")
+        self.assertEqual(len(self.shown), 13)
 
 
 class HelpTest(Folders):
