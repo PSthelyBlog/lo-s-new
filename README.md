@@ -282,3 +282,8 @@ The "Built so far" section of [SPEC.md](SPEC.md) has the rest, with what each tr
 
 The tests use scripted models and never call a real one. They run commands in the real sandbox,
 and those tests are skipped where bubblewrap cannot build one.
+
+## Licence
+
+MIT. See [LICENCE](LICENCE). llama.cpp, the model files and the `claude` program are not part of
+this repository and come with their own terms.
