@@ -11,6 +11,11 @@ def flag(name):
     return "--" + name.replace("_", "-")
 
 
+def count(number, noun):
+    """A number with its noun, as in "1 check" and "3 checks"."""
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+
 def parse(line, table):
     """Return (command, args) when the line starts with a known command name, else None.
 

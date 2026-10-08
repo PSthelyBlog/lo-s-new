@@ -35,12 +35,15 @@ class StudentTest(ShellCase):
         self.assertEqual((self.ran.calls, recorded()[0][3]), ([], "declined"))
 
     def test_a_line_nothing_fits_is_queued_and_keeps_its_number(self):
-        shell = self.shell(NONE, NONE, NONE)
+        shell = self.shell(NONE, NONE, NONE, NONE)
         shell.handle("order a large pizza")
         shell.handle("book a flight")
         self.assertEqual(self.shown[-1], "Nothing here does that yet. It is queued as need 2. needs lists the queue, "
                                          "and forget 2 drops it.")
         self.assertEqual((self.ran.calls, self.asked), ([], []))
+        shell.handle("book a flight")                           # asked again: it keeps its one place in the queue
+        self.assertEqual(self.shown[-1], "Nothing here does that yet. It is already queued as need 2. needs lists the "
+                                         "queue, and forget 2 drops it.")
         shell.handle("forget 1")
         self.assertEqual(self.shown[-1], "Forgotten: order a large pizza")
         shell.handle("needs")

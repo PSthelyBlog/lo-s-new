@@ -13,3 +13,4 @@ what = "battery, cpu, memory or temperature; default all"
 description = "Say in one line whether the machine looks healthy"
 reads = ["/proc", "/sys"]
 judges = ["memory", "temperature"]
+ranges = { memory = [1, 99], temperature = [20, 110] }

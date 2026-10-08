@@ -74,6 +74,16 @@ class JudgementTest(Case):
             self.judge(self.minds({"answer": "hot"}, {"answer": "hot"}, {"answer": "hot"}), "80 °C")
         self.assertEqual(cases.judgements(), [])
 
+    def test_the_student_can_be_asked_on_purpose_about_a_value_no_run_produced(self):
+        minds = self.minds(WORRYING, FINE)
+        self.assertEqual(minds.sample(HEALTH, "temperature", QUESTION, "90 °C", LEVELS), "worrying")
+        case, = cases.judgements()
+        self.assertEqual((case["by"], case["spread"], "run" in case, case["seconds"]), ("student", True, False, 1.5))
+        self.assertEqual(minds.sample(HEALTH, "temperature", QUESTION, "90 °C", LEVELS), "worrying")   # on record: not asked
+        self.assertEqual((self.student.calls, len(cases.judgements()), cases.latest_run()), (1, 1, []))
+        self.assertEqual(self.judge(minds, "90 °C"), "worrying")        # and a run finds it on record like any other
+        self.assertEqual((self.student.calls, cases.judgements()[-1]["by"]), (1, "memory"))
+
     def test_a_command_being_tried_out_leaves_no_record_and_uses_none(self):
         minds = self.minds(FINE, WORRYING, FINE)
         self.judge(minds, "80 °C")
@@ -263,7 +273,8 @@ class ThroughTheSandboxTest(Case):
 class TraceTest(Folders):
     def shell(self, answers=()):
         self.shown, replies = [], list(answers)
-        return Shell(table(("sys.health", [], "read")), lambda question: replies.pop(0), self.shown.append)
+        health = plugins.Command("sys.health", "Test command sys.health", {}, judges=("memory", "temperature"))
+        return Shell({"sys.health": health}, lambda question: replies.pop(0), self.shown.append)
 
     def judged(self, run, name, value, answer, by, **more):
         cases.record("judgement", {"command": "sys.health", "name": name, "ask": f"Is this {name} fine or worrying?",
@@ -279,7 +290,7 @@ class TraceTest(Folders):
         self.judged("run 2", "fan", "2400 rpm", "fine", "student", seconds=0.58)
         shell.handle("trace")
         self.assertEqual(self.shown[1:], [
-            "sys.health asked for 3 judgement(s) the last time it needed any:",
+            "sys.health asked for 3 judgements the last time it needed any:",
             "1. memory of 70% of 31 GB available: fine  (on record, from the student)",
             "2. temperature of 91 °C: worrying  (a rule)",
             "3. fan of 2400 rpm: fine  (the student, 0.6 s)",
@@ -304,6 +315,36 @@ class TraceTest(Folders):
         shell.handle("trace")
         self.assertEqual(self.shown[-2:], ["1. memory of 12% of 31 GB available: worrying  (on record, set by you)",
                                            "To set one yourself: trace NUMBER ANSWER, such as trace 1 fine."])
+
+    def test_trace_shows_everything_on_record_for_one_judgement_and_sets_any_value(self):
+        shell = self.shell()
+        shell.handle("trace sys.health")
+        self.assertEqual(self.shown[-1], "Usage: trace COMMAND NAME, for a judgement a command asks for: sys.health memory, "
+                                         "sys.health temperature.")
+        shell.handle("trace sys.health temperature")
+        self.assertEqual(self.shown[-1], "Nothing is on record for temperature in sys.health yet. It asks when it runs.")
+        for degrees in (40, 60, 80, 90, 100):
+            self.judged("run 1", "temperature", f"{degrees} °C", "fine" if degrees < 85 else "worrying", "student")
+        shell.handle("trace sys.health temperature")
+        self.assertEqual(self.shown[-1], "On record for temperature in sys.health, 5 answers:\n  40 to 80 °C: fine\n"
+                                         "  90 to 100 °C: worrying\nTo set one yourself: trace sys.health temperature "
+                                         "VALUE is ANSWER, such as trace sys.health temperature 40 °C is worrying.")
+        shell.handle("trace sys.health temperature 80 °C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 80 °C as worrying from now on.")
+        shell.handle("trace sys.health temperature 70 °C is fine")      # a value nobody judged yet
+        shell.handle("trace sys.health temperature")
+        self.assertTrue(self.shown[-1].startswith("On record for temperature in sys.health, 6 answers, 2 of them set by "
+                                                  "you:\n  40 to 70 °C: fine\n  80 to 100 °C: worrying\n"))
+        self.assertEqual(cases.judged(cases.judgements()[-1]["question"])["by"], "user")
+        shell.handle("trace sys.health temperature 80C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 80C as worrying from now on.\nThe values on "
+                                         "record look like 40 °C. One written another way will not come up when "
+                                         "sys.health runs.")
+        for wrong_use in ("trace sys.health temperature 80 °C", "trace sys.health temperature 80 °C is hot",
+                          "trace sys.health temperature is fine"):
+            shell.handle(wrong_use)
+            self.assertEqual(self.shown[-1], "Usage: trace sys.health temperature VALUE is ANSWER, with one of its answers: "
+                                             "fine or worrying.", wrong_use)
 
     def test_trace_says_how_to_set_an_answer_when_it_cannot_read_one(self):
         shell = self.shell()
@@ -331,7 +372,8 @@ class TraceTest(Folders):
         state.append("asks", {"command": "chat.ask", "to": "teacher", "seconds": 9})
         shell.handle("stats")
         self.assertEqual(self.shown[-1].splitlines()[5:], [
-            "Judgements inside commands: 4 (1 from the record, 1 by a rule, 2 by the student, taking 1.2 s)",
+            "Judgements inside commands: 4 (1 from the record and 1 by a rule, saving about 1.2 s; 2 by the student, "
+            "taking 1.2 s)",
             "Set by you with trace: 1",
             "Calls to the teacher: 3, of which 1 gave no answer (1 by delegate, 1 for rules, 1 by commands)",
             "Needs waiting: 0"])

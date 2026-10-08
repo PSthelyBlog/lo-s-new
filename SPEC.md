@@ -125,7 +125,8 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
      parameters, or none. The typed form is shown. Enter accepts a read command; anything else
      needs an explicit yes. Accepting records a confirmed case. Declining settles nothing,
      because the choice may be right and simply unwanted.
-  5. Nothing fits: the line is queued as a need. A need keeps its number for good.
+  5. Nothing fits: the line is queued as a need. A need keeps its number for good, and a line
+     that is waiting already is not queued a second time.
 - **Proposed.** What is shown before a question is the command in full: a path left out is filled
   in, and every path is absolute, with the home folder written as `~`. That line is what will
   run and all that the command can touch. What is remembered is what was said, so a relative
@@ -215,6 +216,10 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Proposed.** `trace` shows the judgements the latest run asked for and where each answer came
   from. `trace NUMBER ANSWER` sets one as the user's own. It comes first from then on, before a
   rule too.
+- **Proposed.** `trace COMMAND NAME` shows every answer on record for one judgement, as stretches
+  of values that got the same answer. `trace COMMAND NAME VALUE is ANSWER` sets the answer for
+  any value, judged before or not. This is how the user moves the line before a rule is made
+  from it.
 - **Proposed.** The student is asked with the question and the allowed answers at the start of
   the prompt and the value alone after it. Measured: that is what lets the server reuse its work
   when two kinds of judgement are asked in turn.
@@ -222,6 +227,13 @@ ways: a judgement, which is a closed question, and a question of the command's o
   reproduces the answers on record for one judgement, and returns nothing for a value they do
   not settle.
   - It needs six different values and two different answers.
+  - A command's own runs may never give that: a machine that stays cool only ever has "fine" on
+    record. So a manifest can give, under `ranges`, the lowest and highest number a judged value
+    can hold. When too little is on record, `rule` offers to put values from across that range
+    to the student first, which is free: nine evenly spaced, then up to eight more, each halfway
+    between two neighbours that got different answers. Those answers are recorded as the
+    student's, in no run. The user then sees the record and is asked before the teacher is.
+  - `rule` always shows the record in a few lines before it calls the teacher.
   - A quarter of the answers are held back, spread over the values. An answer the user set is
     never held back, and the teacher is told which ones are the user's.
   - The teacher also judges the answers, and may decline.
@@ -246,6 +258,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
   judgement the user never looks at stays the student's opinion. `trace` is how it becomes theirs.
 - **Open.** The record answers only an exact value, so a command has to round what it has judged.
   `sys.health` judges whole degrees and whole per cent.
+- **Open.** A spread varies the first number in a value and nothing else, so a judgement of
+  something that is not a number in fixed text cannot be spread.
+- **Open.** An answer the user set cannot be handed back to the student. It can only be set again.
 - **Open.** A command that asks a model can draw lines that name nobody. In the trial one such
   line of fifteen went to it.
 
@@ -263,11 +278,41 @@ ways: a judgement, which is a closed question, and a question of the command's o
 
 ## Looking for improvements
 
-Not built yet.
-
-- **Proposed.** A set of small functions over the case log, each finding one kind of opportunity
-  and saying what it would save. One shell word lists what they find, largest saving first, with
-  what to type for each. The system proposes and the user decides.
+- **Proposed.** `improve` lists what lo-s could do better, found in its own records, each with
+  what to type and what that costs. Nothing is done there: most of it costs a call to the
+  teacher, so lo-s proposes and the user decides.
+- **Proposed.** Each kind of opportunity has a small function of its own (`los/improve.py`):
+  - **a need that keeps being asked**: a waiting line the student found nothing for twice or
+    more. What the teacher already turned down is left out.
+  - **a line the student keeps getting wrong**: a line it answered twice or more with none of
+    its answers standing.
+  - **a judgement that deserves a rule**: one the student was asked in a run, when enough is on
+    record for a rule; or three times or more, when the manifest gives a range to spread over.
+  - **a rule to make again**: one the user has overruled, or one that left the student to answer
+    three times or more since it was made while the record grew.
+  - **example lines gone astray**: a written command's own example lines that reached it at one
+    check and went elsewhere at the next. A line that never reached its command is not raised:
+    the user saw that when they installed it.
+  - **lines grown slow**: the middle one of the latest twenty lines the student answered took
+    more than two seconds. Nothing in lo-s cures that yet; it is the measurement that would ask
+    for a shortlist of commands.
+- **Proposed, and a change from the first design**, which put the largest saving first. What
+  cost the user something comes first: a request that went unanswered, an answer they did not
+  take, an answer they had to set against a rule. What only took model time comes after, the
+  most first. A second of the student is not noticed, and asking three times for nothing is.
+- **Proposed.** Whether example lines still reach their command cannot be read from the records.
+  `improve lines` asks the student each written command's lines again, which is free, and
+  records where each went. Where they went is also recorded when a command is installed, so the
+  first check has something to compare with. A line the user has settled is left out: memory
+  answers it, so where the student would send it no longer matters. The first build tested
+  exactly those lines.
+- **Proposed.** `stats` counts what each source answered and the model time that saved, for lines
+  and for judgements.
+- **Open.** A line gone astray has no cure but `means` for that one line. The candidate
+  descriptions the teacher gave with a command could be tried again for free; that is not built.
+- **Open.** Needs are counted by their exact words, so two wordings of one need are two needs.
+- **Open.** The thresholds (twice, three times, two seconds) are guesses. Only model time is
+  measured, not the user's.
 
 ## Left out on purpose
 
@@ -279,7 +324,8 @@ Not built yet.
 
 ## Built so far
 
-Steps 1 to 4 of five: the core, plain language, the teacher step, and judgements.
+All five steps: the core, plain language, the teacher step, judgements, and looking for
+improvements.
 
 - Manifests and the command table (`los/plugins.py`): parameters with hints, paths and defaults,
   fixed paths, the data folder, the effect, and the check that grants do not exceed it.
@@ -350,6 +396,19 @@ Steps 1 to 4 of five: the core, plain language, the teacher step, and judgements
     the student only. It passed its 4 checks, 9 of its 10 lines went where they belong, and the
     request was then carried out. With it installed, 3 of 17 other lines went somewhere new: the
     two that name the student, and "what is a semaphore", which names nobody.
+- Looking for improvements (`los/improve.py`, `improve` and `improve lines` in the shell): the
+  finders, their order, and the check of example lines.
+- For a rule: `ranges` in a manifest, the spread of values put to the student, the record shown
+  before the call, and `trace COMMAND NAME` to see it and set any value.
+- Tried on 2026-10-08 on the student, in scratch folders, with no teacher call.
+  - From one real reading each, the spread found where the student draws its line in 12 and 13
+    questions of about 0.6 seconds: free memory worrying up to 13% and fine from 14%, a
+    temperature fine up to 82 °C and worrying from 83 °C. These are the student's answers, not
+    a check that they are right.
+  - `improve lines` put 24 example lines of four written commands to the student. 23 reached
+    their command. "copy the src directory to src.orig" went to `fs.move`, as it had when
+    `fs.copy` was first tried, so nothing had changed.
+- Not tried on the teacher yet: what it is told about `ranges`.
 
 ## What the first build measured
 

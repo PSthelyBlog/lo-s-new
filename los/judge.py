@@ -6,7 +6,8 @@ A judgement is a closed question: one of a few answers for one value, such as wh
 temperature is fine or worrying. It is answered from the surest source there is: an answer on
 record for that exact value, then a rule if one was made and it covers the value, and the student
 last. Every answer is recorded as a case with the run it was asked in, so that `trace` can show
-where each came from and the user can set one themselves.
+where each came from and the user can set one themselves. The student can also be asked on
+purpose about values no run produced, to see where it draws its line before a rule is made.
 
 A question of the command's own is free text to the student or the teacher. Nothing about it is
 reused. One to the teacher is a call the user counts, so they are shown it and asked first.
@@ -59,21 +60,34 @@ class Minds:
             if ruled:
                 cases.record("judgement", asked, ruled, "rule", run=run)
                 return ruled
+        return self._student(asked, run=run)
+
+    def sample(self, command, name, question, value, choices):
+        """What the student says to a value no run has produced, asked on purpose to see where it
+        draws its line. A value that has its answer on record is not asked about again. The
+        answer is recorded like any other of the student's, as part of a spread and of no run."""
+        asked = {"command": command.name, "name": name, "ask": question, "choices": list(choices), "value": value}
+        known = cases.judged(asked)
+        return known["answer"] if known else self._student(asked, spread=True)
+
+    def _student(self, asked, **more):
+        """Ask the student for one judgement and record what it says."""
+        name, choices = asked["name"], asked["choices"]
         if not self.student:
             raise Refused(f"no model is set up as the student, which would judge {name}")
         schema = {"type": "object", "additionalProperties": False, "required": ["answer"],
                   "properties": {"answer": {"type": "string", "enum": list(choices)}}}
         try:
-            output, meta = complete_valid(self.student, f"Question: {question}\nAllowed answers: "
-                                          f"{' | '.join(choices)}\n\n{JUDGE}", f"Value: {value}", schema)
+            output, meta = complete_valid(self.student, f"Question: {asked['ask']}\nAllowed answers: "
+                                          f"{' | '.join(choices)}\n\n{JUDGE}", f"Value: {asked['value']}", schema)
         except ModelUnavailable as error:
             raise Refused(f"the student, which would judge {name}, did not answer ({error}). If it is the local "
                           "model, scripts/serve.sh starts it")
         except RuntimeError as error:
             raise Refused(f"the student's judgement of {name} could not be used ({error})")
         if self.keep:
-            cases.record("judgement", asked, output["answer"], "student", run=run,
-                         model=self.student.model, seconds=meta.get("seconds"))
+            cases.record("judgement", asked, output["answer"], "student",
+                         model=self.student.model, seconds=meta.get("seconds"), **more)
         return output["answer"]
 
     def ask(self, command, to, message):

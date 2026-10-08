@@ -104,6 +104,7 @@ def do_forecast(place=None):
 
 CHAT = {
     "plugin": "chat", "verb": "ask", "effect": "read", "asks": ["student", "teacher"], "judges": ["tone"],
+    "ranges": [{"name": "tone", "low": "0", "high": "10.5"}],
     "descriptions": ["Put a question to the student or the teacher; only for lines that name one of them"],
     "params": [{"name": "to", "hint": "student or teacher"}, {"name": "message", "hint": "the question"}],
     "code": '''"""Put a question to one of the models."""
@@ -257,6 +258,10 @@ class ProposalTest(Case):
         found = self.staged(CHAT)
         self.assertEqual((found.fault, found.command.asks, found.command.judges), ("", ("student", "teacher"), ("tone",)))
         self.assertIn('judges = ["tone"]\nasks = ["student", "teacher"]\n', (found.folder / "plugin.toml").read_text())
+        self.assertEqual(found.command.ranges, {"tone": (0, 10.5)})
+        careless = self.staged({**CHAT, "verb": "tell", "code": CHAT["code"].replace("do_ask", "do_tell"),
+                                "ranges": [{"name": "tone", "low": "low", "high": "10"}]})
+        self.assertIn("the lowest and the highest number its value can hold", careless.fault)
         self.assertIn("ask(to, message), from los, returns the answer as text.", teach.BRIEF)
         self.assertIn("judge(name, question, value, choices), from los, returns the one of choices", teach.BRIEF)
 
@@ -277,8 +282,9 @@ class ProposalTest(Case):
                            call("fs.delete", path="old-report.txt"), call("fs.delete", path="draft.md"),
                            call("fs.move", source="a.txt", dest="b.txt"), call("fs.delete"))
         tried = teach.try_descriptions(student, self.table, command, DELETE)
-        self.assertEqual([(description, right, total) for description, right, total, _ in tried],
+        self.assertEqual([(description, right, total) for description, right, total, *_ in tried],
                          [("Remove (erase) a single named file; not for folders", 3, 4), ("Delete one file for good", 2, 4)])
+        self.assertEqual(tried[1][4], [("delete old-report.txt", "fs.delete"), ("get rid of draft.md", None)])  # its own lines
         self.assertEqual(tried[0][3], ['The line "empty the bin" should reach no command, and the student sent it to fs.delete.'])
         self.assertEqual(tried[1][3][0], 'The line "get rid of draft.md" should reach fs.delete, and the student sent it '
                                          'to no command.')
@@ -381,8 +387,8 @@ class DelegateTest(Case):
                  call("fs.move", source="a.txt", dest="b.txt"), NONE]                                           # second: all four
         shell = self.shell(write(DELETE), student_says=tried, answers=["n"])
         shell.handle("delegate I want to be able to delete files")
-        self.assertEqual(self.shown[1:3], ["Running 4 check(s) of fs.delete in the sandbox.",
-                                           "Trying 2 description(s) of it on scripted."])
+        self.assertEqual(self.shown[1:3], ["Running 4 checks of fs.delete in the sandbox.",
+                                           "Trying 2 descriptions of it on scripted."])
         self.assertIn("fs.delete  Remove (erase) a single named file; not for folders  (effect: destructive)", self.shown[3])
         self.assertIn("Checks: 4 of 4 passed.\nLines: with this description the student sent 4 of 4 where they belong. "
                       "The other descriptions got 3 of 4.", self.shown[3])
@@ -401,6 +407,9 @@ class DelegateTest(Case):
         self.assertIn('description = "Remove (erase) a single named file; not for folders"', manifest)
         self.assertIn('[origin]\nwords = "I want to be able to delete files"\nwritten_by = "scripted-teacher"', manifest)
         self.assertTrue((self.plugin_dir / "fs.delete" / "proposal.json").exists())
+        self.assertEqual([(row["command"], row["line"], row["reached"]) for row in state.read("line_checks")],
+                         [("fs.delete", "delete old-report.txt", "fs.delete"), ("fs.delete", "get rid of draft.md", "fs.delete")])
+        self.assertEqual(state.read("line_checks")[0]["at"], state.read("line_checks")[1]["at"])    # one check, to compare with later
         shell.handle(f"fs.delete --path {target}")        # it is a command like any other now, and asks before it runs
         self.assertEqual((self.asked[-1], self.shown[-1], target.exists()),
                          ("It makes changes that cannot be undone. Run it? [y/N] ", f"Deleted {target}", False))

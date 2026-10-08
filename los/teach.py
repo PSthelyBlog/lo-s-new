@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import shutil
 import tempfile
 
@@ -105,7 +106,9 @@ lo-s answers from what it has on record for that exact value, then from a rule i
 and asks the student last. The user can see every answer and set one themselves. Keep question \
 and choices fixed text, and value short and regular, such as a number with its unit, so that \
 the same value comes round again. No check can know what will be answered, so let none depend \
-on it.
+on it. When value is a number with fixed text around it, also give ranges: for that judgement, \
+the lowest and the highest number the value can sensibly hold. lo-s can then put values from \
+across that range to the student, to see where it draws the line before a rule is made.
 - asks: "student", "teacher" or both: the models the command may put a question of its own to. \
 ask(to, message), from los, returns the answer as text. It is for a command whose whole purpose \
 is to consult a model, such as one that puts the user's question to the student, and not a way \
@@ -132,8 +135,8 @@ name must not be one in the table.
 
 What to give in write.
 - plugin, verb, effect, code, and params: each with name and hint, and for a path also path \
-and, when there is one, default. reads, data, hosts, judges and asks only when the command \
-needs them.
+and, when there is one, default. reads, data, hosts, judges, ranges and asks only when the \
+command needs them.
 - descriptions: two or three candidate descriptions of one sentence each, worded differently. \
 The student sees nothing but the table, so the description and the hints are all it goes by. \
 Say what the command is for in words a user would use. Where another command is close, say what \
@@ -181,6 +184,7 @@ SCHEMA = {
                 "data": {"type": "string", "enum": ["", "read", "write"]},
                 "hosts": {"type": "array", "items": TEXT},
                 "judges": {"type": "array", "items": TEXT},
+                "ranges": _things(["name", "low", "high"], name=TEXT, low=TEXT, high=TEXT),
                 "asks": {"type": "array", "items": {"type": "string", "enum": list(plugins.ROLES)}},
                 "code": TEXT,
                 "lines": _things(["line", "args"], line=TEXT, args=ARGS),
@@ -232,6 +236,11 @@ def _args(listed):
 
 def _line(text):
     return " ".join(str(text).split())
+
+
+def _number(text):
+    """Whether a text is a plain number, as a manifest writes one."""
+    return bool(re.fullmatch(r"-?\d+(\.\d+)?", text))
 
 
 def setup(roles):
@@ -292,6 +301,10 @@ def manifest(proposal, description, words, teacher):
     rows += [f"{key} = [{', '.join(map(quoted, proposal[key]))}]" for key in ("reads", "hosts", "judges", "asks")
              if proposal.get(key)]
     rows += [f"data = {quoted(proposal['data'])}"] if proposal.get("data") else []
+    if proposal.get("ranges"):      # a number goes in as one; anything else is quoted, and the loader refuses it
+        rows.append("ranges = { " + ", ".join(
+            f"{one['name']} = [{', '.join(end if _number(end) else quoted(end) for end in (one['low'], one['high']))}]"
+            for one in proposal["ranges"]) + " }")
     rows.append(f"[commands.{proposal['verb']}.params]")
     for param in proposal["params"]:
         extra = "".join(f", {key} = {quoted(param[key])}" for key in ("path", "default") if param.get(key))
@@ -390,25 +403,28 @@ def check(command, wanted, online, minds=None):
 def try_descriptions(student, table, command, proposal):
     """Ask the student the proposal's lines once for each candidate description, with the
     command in the table. Returns one (description, lines that went where they should, lines
-    tried, what went astray) per description, the best first."""
+    tried, what went astray, where each of the command's own lines went) per description, the
+    best first."""
     lines = [(_line(entry["line"]), command.name) for entry in proposal["lines"][:MOST["lines"]]]
     lines += [(_line(entry["line"]), None if entry["command"] == "none" else entry["command"])
               for entry in proposal["others"][:MOST["others"]]]
     tried = []
     for description in proposal["descriptions"][:MOST["descriptions"]]:
         with_it = {**table, command.name: dataclasses.replace(command, description=_line(description))}
-        right, misses = 0, []
+        right, misses, went = 0, [], []
         for line, belongs in lines:
             try:
                 reached = route.ask(student, with_it, line).command
             except RuntimeError:        # an answer that fits no command counts as going nowhere
                 reached = None
+            if belongs == command.name:
+                went.append((line, reached))
             if reached == belongs:
                 right += 1
             else:
                 misses.append(f"The line \"{line}\" should reach {belongs or 'no command'}, and the student sent it to "
                               f"{reached or 'no command'}.")
-        tried.append((_line(description), right, len(lines), misses))
+        tried.append((_line(description), right, len(lines), misses, went))
     return sorted(tried, key=lambda one: -one[1])
 
 
@@ -433,8 +449,8 @@ def show(found, advice):
     parts.append(f"Checks: {passed} of {len(found.checks)} passed.")
     parts += [f"  - {what} {problem}" for what, problem in found.checks if problem]
     if found.tried:
-        _, right, total, misses = found.tried[0]
-        others = ", ".join(f"{score} of {total}" for _, score, _, _ in found.tried[1:])
+        _, right, total, misses, *_ = found.tried[0]
+        others = ", ".join(f"{score} of {total}" for _, score, *_ in found.tried[1:])
         parts.append(f"Lines: with this description the student sent {right} of {total} where they belong."
                      + (f" The other descriptions got {others}." if others else ""))
         parts += [f"  - {miss}" for miss in misses]

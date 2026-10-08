@@ -16,6 +16,7 @@ process of its own (see sandbox.py), which is given what the manifest declares a
     data = "write"                      # its plugin's data folder: read or write
     hosts = ["api.example.org"]         # hosts it may fetch from, through the core
     judges = ["size"]                   # judgements it asks for, by name
+    ranges = { size = [0, 500] }        # for a judged value that is a number in fixed text: lowest and highest
     asks = ["student"]                  # models it may put a question of its own to: student, teacher
 
     [commands.move.params]
@@ -79,6 +80,7 @@ class Command:
     written_by: str = ""        # the model that wrote it, when one did
     judges: tuple = ()          # the judgements it asks for, by name
     asks: tuple = ()            # the models it may put a question of its own to
+    ranges: dict = dataclasses.field(default_factory=dict)  # judgement -> (lowest, highest) number its value holds
 
     @property
     def plugin(self):
@@ -135,10 +137,10 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: a verb is lower-case letters, digits and underscores")
     if not isinstance(entry, dict) or not isinstance(entry.get("params", {}), dict):
         raise ManifestError(f"{name} and its params are tables")
-    _only(entry, {"description", "effect", "reads", "data", "hosts", "judges", "asks", "params"}, name)
+    _only(entry, {"description", "effect", "reads", "data", "hosts", "judges", "ranges", "asks", "params"}, name)
     description, effect = entry.get("description"), entry.get("effect", "read")
     reads, data, hosts = entry.get("reads", []), entry.get("data", ""), entry.get("hosts", [])
-    judges, asks = entry.get("judges", []), entry.get("asks", [])
+    judges, asks, ranges = entry.get("judges", []), entry.get("asks", []), entry.get("ranges", {})
     if not isinstance(description, str) or not description.strip():
         raise ManifestError(f"{name} needs a description")
     if effect not in EFFECTS:
@@ -153,6 +155,12 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: judges is a list of names in lower-case letters, digits and underscores")
     if not isinstance(asks, list) or not all(isinstance(one, str) and one in ROLES for one in asks):
         raise ManifestError(f"{name}: asks is a list holding {' or '.join(ROLES)}")
+    if not isinstance(ranges, dict) or not all(
+            one in judges and isinstance(ends, list) and len(ends) == 2
+            and all(isinstance(end, (int, float)) and not isinstance(end, bool) for end in ends) and ends[0] < ends[1]
+            for one, ends in ranges.items()):
+        raise ManifestError(f"{name}: ranges gives, for a judgement listed in judges, the lowest and the highest "
+                            "number its value can hold, such as size = [0, 500]")
     params = {key: _param(name, key, value) for key, value in entry.get("params", {}).items()}
     for key, param in params.items():   # a default may be built from other parameters, and from nothing else
         for _, field, spec, conversion in string.Formatter().parse(param.default):
@@ -175,7 +183,7 @@ def _command(plugin, verb, entry, functions, source, written_by):
     if problem:
         raise ManifestError(f"{name}: commands.py {problem.format(function=f'do_{verb}')}")
     return Command(name, description, params, effect, tuple(reads), data, tuple(hosts), source, written_by,
-                   tuple(judges), tuple(asks))
+                   tuple(judges), tuple(asks), {one: tuple(ends) for one, ends in ranges.items()})
 
 
 def _param(name, key, value):

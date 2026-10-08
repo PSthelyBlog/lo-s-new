@@ -12,6 +12,10 @@ returning None, which is always safe. It may never contradict one.
 
 An answer on record for an exact value is used before the rule is asked, so a rule only ever
 decides values that were not seen before, and an answer the user sets later comes first.
+
+A command's own runs may never show where the line is: a machine that stays cool only ever has
+"fine" on record. When the manifest says between which numbers a value lies, the student can be
+asked about values spread over that range first, which is free.
 """
 import ast
 import datetime
@@ -20,8 +24,11 @@ import re
 
 from . import cases, sandbox, state
 from .models import complete_valid
+from .parse import count
 
 MINIMUM = 6     # different values on record before a rule is attempted
+NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+COARSE, FINER = 9, 8    # values asked evenly over a range, and then at most this many more where the answer changes
 
 BRIEF = """\
 You are the teacher of lo-s, a personal command line. One of its commands needs a judgement that \
@@ -63,14 +70,15 @@ def _natural(text):
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", text)]
 
 
-def recorded(command, name):
+def answers(command, name):
     """What is on record for one judgement: (the question, the allowed answers, one (value, answer,
-    who gave it) per value, in the order of the values). The answer for a value is the one the
-    user set if they set one, otherwise what the student said. Only cases asked the way the
-    command asks now count: under another question they would be answers to something else."""
+    who gave it) per value, in the order of the values), or nothing when no answer is on record.
+    The answer for a value is the one the user set if they set one, otherwise what the student
+    said. Only cases asked the way the command asks now count: under another question they
+    would be answers to something else."""
     asked = [case for case in cases.judgements(command, name) if case["by"] in ("user", "student")]
     if not asked:
-        raise Unsuitable("nothing is on record for it yet")
+        return None
     question, choices = asked[-1]["question"]["ask"], asked[-1]["question"]["choices"]
     found = {}
     for case in asked:
@@ -78,12 +86,82 @@ def recorded(command, name):
         if (case["question"]["ask"], case["question"]["choices"]) == (question, choices) \
                 and (case["by"] == "user" or value not in found or found[value][2] != "user"):
             found[value] = (value, case["answer"], case["by"])
-    listed = sorted(found.values(), key=lambda one: _natural(one[0]))
+    return question, choices, sorted(found.values(), key=lambda one: _natural(one[0]))
+
+
+def recorded(command, name):
+    """The same, when it is enough to make a rule from. Otherwise Unsuitable says what is missing."""
+    found = answers(command, name)
+    if not found:
+        raise Unsuitable("nothing is on record for it yet")
+    listed = found[2]
     if len(listed) < MINIMUM:
-        raise Unsuitable(f"only {len(listed)} different value(s) are on record for it, and a rule needs {MINIMUM}")
+        raise Unsuitable(f"only {count(len(listed), 'different value')} {'is' if len(listed) == 1 else 'are'} on "
+                         f"record for it, and a rule needs {MINIMUM}")
     if len({answer for _, answer, _ in listed}) < 2:
-        raise Unsuitable("every recorded answer is the same, so there is no line for a rule to draw")
-    return question, choices, listed
+        raise Unsuitable("every answer on record is the same, so there is no line for a rule to draw")
+    return found
+
+
+def summary(listed):
+    """The answers on record in a few lines: each stretch of values that got the same answer.
+    Values that differ only in their first number are written as one, as in 20 to 82 °C."""
+    def stretch(first, last):
+        ends = varying(first), varying(last)
+        if first == last:
+            return first
+        if all(ends) and (ends[0][0], ends[0][2]) == (ends[1][0], ends[1][2]):
+            return f"{ends[0][0]}{ends[0][1]} to {ends[1][1]}{ends[1][2]}"
+        return f"{first} to {last}"
+
+    lines, start = [], 0
+    for index in range(1, len(listed) + 1):
+        if index == len(listed) or listed[index][1] != listed[start][1]:
+            lines.append(f"  {stretch(listed[start][0], listed[index - 1][0])}: {listed[start][1]}")
+            start = index
+    return lines
+
+
+def varying(value):
+    """A value split around its first number, as (the text before, the number, the text after),
+    or nothing when it holds no number."""
+    found = NUMBER.search(value)
+    return (value[:found.start()], found.group(), value[found.end():]) if found else None
+
+
+def spread(ask, example, answered, low, high):
+    """Find where the answers change between `low` and `high`, by asking.
+
+    `example` is a value on record, and its first number is the part that varies. `answered`
+    holds the answers already on record, by value. Values evenly spaced over the range are asked
+    first, and then a few more, each halfway between two neighbours that got different answers.
+    `ask(value)` gives the answer for one value. Returns the values that were asked, in order."""
+    before, number, after = varying(example)
+    places = len(number.partition(".")[2])          # as many digits after the point as the example has
+    found, asked = {}, []                           # number -> answer
+
+    def put(number):
+        number = round(number, places)
+        if number not in found:
+            value = f"{before}{number:.{places}f}{after}"
+            found[number] = ask(value)
+            asked.append(value)
+
+    for value, answer in answered.items():
+        parts = varying(value)
+        if parts and (parts[0], parts[2]) == (before, after) and low <= float(parts[1]) <= high:
+            found[round(float(parts[1]), places)] = answer
+    for step in range(COARSE):
+        put(low + step * (high - low) / (COARSE - 1))
+    for _ in range(FINER):
+        ordered = sorted(found)
+        gaps = [(above - below, below, above) for below, above in zip(ordered, ordered[1:])
+                if found[below] != found[above] and above - below > 1.5 * 10 ** -places]
+        if not gaps:
+            break
+        _, below, above = max(gaps)                 # the widest stretch across which the answer changes
+        put((below + above) / 2)
+    return asked
 
 
 def split(listed):
@@ -157,14 +235,15 @@ def failures(code, shown, held=()):
     return wrong, answered
 
 
-def install(command, name, question, choices, code, teacher, count):
+def install(command, name, question, choices, code, teacher, answered):
     """Keep an approved rule. Returns the file it is in."""
     folder = state.directory() / "rules"
     folder.mkdir(exist_ok=True)
     path = folder / f"{command}.{name}.py"
     path.write_text(code.rstrip() + "\n")
+    now = datetime.datetime.now()
     state.append("rules", {"command": command, "name": name, "ask": question, "choices": choices, "file": path.name,
-                           "cases": count, "date": datetime.date.today().isoformat(),
+                           "cases": answered, "date": now.date().isoformat(), "at": now.isoformat(timespec="microseconds"),
                            "written_by": teacher.model, "provider": teacher.provider})
     return path
 

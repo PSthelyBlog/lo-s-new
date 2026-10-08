@@ -19,7 +19,8 @@ the news that lo-s cannot do it. `means` is the user saying themselves what a li
 
 A command may ask for a judgement while it runs. `trace` shows the judgements of the latest run
 and where each answer came from, and lets the user set one. `rule` has the teacher turn the
-answers on record for one judgement into code.
+answers on record for one judgement into code. `improve` lists what the records show could be
+better, and what to type for each.
 """
 import argparse
 import datetime
@@ -29,9 +30,9 @@ import shutil
 import statistics
 import tomllib
 
-from . import cases, judge, plugins, route, rules, sandbox, state, teach
+from . import cases, improve, judge, plugins, route, rules, sandbox, state, teach
 from .models import ModelUnavailable, provider
-from .parse import UsageError, flag, parse, render, usage
+from .parse import UsageError, count, flag, parse, render, usage
 
 BUILTINS = {
     "help": "help lists the commands. help NAME explains one and says what it may touch.",
@@ -45,10 +46,17 @@ BUILTINS = {
                 "that exists, install a new one that it writes, or neither. delegate NUMBER does that for a queued "
                 "need. You see its answer, and what a new command may touch, before anything happens.",
     "trace": "trace shows the judgements the latest command asked for, and where each answer came from: what is on "
-             "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on.",
+             "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on. "
+             "trace COMMAND NAME shows every answer on record for one judgement, and trace COMMAND NAME VALUE is "
+             "ANSWER sets the answer for any value.",
     "rule": "rule COMMAND NAME asks the teacher to turn the answers on record for one judgement into a small "
             "function. It is tried on every one of them, and you see it before it is used. From then on that "
-            "judgement asks the rule before the student.",
+            "judgement asks the rule before the student. When too little is on record, it first offers to put "
+            "values from across the judgement's range to the student, which is free.",
+    "improve": "improve lists what lo-s could do better, found in its own records: what you keep asking for and "
+               "not getting, lines the student keeps answering in a way you do not take, judgements a rule could make. "
+               "What cost you something comes first, then what took the most model time. Each comes with what to "
+               "type. improve lines puts every written command's own example lines to the student again.",
     "stats": "stats shows how many plain-language lines memory, the student and the teacher answered, the model "
              "time memory saved, who made the judgements commands asked for, and how many calls the teacher got.",
     "exit": "exit leaves the shell.",
@@ -97,6 +105,8 @@ class Shell:
             self.trace(words[1:])
         elif words[0] == "rule":
             self.rule(words[1:])
+        elif words[0] == "improve":
+            self.look(words[1:])
         else:
             try:
                 parsed = parse(line, self.table)
@@ -228,8 +238,9 @@ class Shell:
                 self.out(f"That answers need {number}, so it left the queue.")
 
     def queue(self, line, by):
+        waiting = any(need["line"] == line for need in cases.waiting().values())
         number = cases.queue(line, by)
-        self.out(f"Nothing here does that yet. It is queued as need {number}. " +
+        self.out(f"Nothing here does that yet. It is {'already ' if waiting else ''}queued as need {number}. " +
                  (f"delegate {number} asks {self.teacher.model} about it, and " if self.teacher else
                   "needs lists the queue, and ") + f"forget {number} drops it.")
 
@@ -311,6 +322,8 @@ class Shell:
                 name, home = found.command.name, teach.install(found, self.plugin_dir)
                 self.table, problems = plugins.load(self.plugin_dir)
                 self.out("\n".join(problems + [f"Installed {name} in {home}. Delete that folder to remove it."]))
+                if found.tried:     # where its own lines went under the description kept: what a later check compares with
+                    improve.note(name, found.tried[0][4])
                 self.suggest(name, proposal)
                 if number or any(" ".join(entry["line"].split()) == words for entry in proposal["lines"]):
                     self.out(f"Now for what you asked: {words}")    # the words were a request, so carry it out
@@ -333,13 +346,13 @@ class Shell:
         command, checks = found.command, proposal["checks"][:teach.MOST["checks"]]
         online = not command.hosts or self.confirm(
             f"Its checks would fetch from {', '.join(command.hosts)}. Let them?", default=False)
-        self.out(f"Running {len(checks)} check(s) of {command.name} in the sandbox.")
+        self.out(f"Running {count(len(checks), 'check')} of {command.name} in the sandbox.")
         found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
         if not self.student:
             found.untried = "No model is set up as the student."
             return
-        self.out(f"Trying {min(len(proposal['descriptions']), teach.MOST['descriptions'])} description(s) of it on "
-                 f"{self.student.model}.")
+        self.out(f"Trying {count(min(len(proposal['descriptions']), teach.MOST['descriptions']), 'description')} of it "
+                 f"on {self.student.model}.")
         try:
             found.tried = teach.try_descriptions(self.student, self.table, command, proposal)
             teach.settle(found, found.tried[0][0], words, self.teacher, proposal)
@@ -373,7 +386,7 @@ class Shell:
     def needs(self):
         waiting = cases.waiting()
         # Asking the teacher again costs a call, so a need it has already turned down says so.
-        latest = {call["words"]: call["answer"]["answer"] for call in state.read("delegations") if "answer" in call}
+        latest = cases.teacher_said()
         self.out("\n".join(f"{number}. {need['line']}  ({need['date']}" +
                            ("; the teacher said lo-s cannot do it)" if latest.get(need["line"]) == "cannot" else ")")
                            for number, need in waiting.items())
@@ -402,15 +415,17 @@ class Shell:
         judged = cases.judgements()
         made = {source: [case for case in judged if case.get("run") and case["by"] == source]
                 for source in ("memory", "rule", "student")}
+        spent = [case.get("seconds") or 0 for case in made["student"]]
+        spared = (len(made["memory"]) + len(made["rule"])) * (statistics.median(spent) if spent else 0)
         self.out(f"Plain-language lines: {len(by['memory']) + len(by['student'])}\n"
                  f"Answered from memory: {len(by['memory'])}, saving about {len(by['memory']) * usual:.1f} s of model time\n"
                  f"Answered by the student: {len(by['student'])}, taking {sum(took):.1f} s "
                  f"({told['accepted']} accepted, {told['declined']} declined, {told['']} where nothing fitted)\n"
                  f"Settled by you with means: {sum(case['verdict'] == 'accepted' for case in by['user'])}\n"
                  f"Taken back with wrong: {sum(case['verdict'] == 'wrong' for case in by['user'])}\n" +
-                 (f"Judgements inside commands: {sum(map(len, made.values()))} ({len(made['memory'])} from the record, "
-                  f"{len(made['rule'])} by a rule, {len(made['student'])} by the student, taking "
-                  f"{sum(case.get('seconds') or 0 for case in made['student']):.1f} s)\n"
+                 (f"Judgements inside commands: {sum(map(len, made.values()))} ({len(made['memory'])} from the record "
+                  f"and {len(made['rule'])} by a rule, saving about {spared:.1f} s; {len(made['student'])} by the "
+                  f"student, taking {sum(spent):.1f} s)\n"
                   f"Set by you with trace: {sum(case['by'] == 'user' for case in judged)}\n" if judged else "") +
                  f"Calls to the teacher: {sum(map(len, calls.values()))}" +
                  (f", of which {failed} gave no answer" if failed else "") +
@@ -418,9 +433,63 @@ class Shell:
                   if calls["for rules"] or calls["by commands"] else "") + "\n"
                  f"Needs waiting: {len(cases.waiting())}")
 
+    def look(self, words):
+        """List what the finders see in the records, each with what to type. Nothing is done here."""
+        if words == ["lines"]:
+            self.check_lines()
+            return
+        if words:
+            self.out("Usage: improve, or improve lines.")
+            return
+        found = improve.find(self.table)
+        for number, one in enumerate(found, 1):
+            self.out(f"{number}. {one.text}" + (f"\n   {one.do}   ({one.cost or 'free'})" if one.do else ""))
+        self.out(("" if found else "Nothing stands out in what is on record so far.\n") +
+                 "improve lines puts each written command's own example lines to the student again, to see whether "
+                 "they reach it. That is free.")
+
+    def check_lines(self):
+        """Ask the student the example lines each written command came with, as the table is now."""
+        if not self.student:
+            self.out("No model is set up as the student, which these lines are put to.")
+            return
+        written = improve.written(self.table)
+        total = sum(map(len, written.values()))
+        if not total:
+            self.out("No command here came with example lines that are still the student's to answer.")
+            return
+        self.out(f"Asking {self.student.model} {count(total, 'example line')} of {count(len(written), 'command')} "
+                 "a model wrote.")
+        try:
+            results = improve.check(self.student, self.table)
+        except ModelUnavailable as error:
+            self.out(f"The student did not answer: {error}.")
+            return
+        def told(name, line, reached, earlier):
+            went = f"  \"{line}\" goes to {reached or 'no command'}"
+            if not earlier:
+                return went + "."
+            if earlier["reached"] == name:
+                return f"  \"{line}\" reached it on {earlier['date']} and now goes to {reached or 'no command'}."
+            return went + f", and did not reach it on {earlier['date']} either."
+
+        for name, (asked, astray) in results.items():
+            if asked:
+                self.out(f"{name}: {count(asked - len(astray), 'line')} of {asked} {'reaches' if asked - len(astray) == 1 else 'reach'} it." +
+                         "".join("\n" + told(name, *one) for one in astray))
+        lost = any(earlier and earlier["reached"] == name for name, (_, astray) in results.items() for _, _, earlier in astray)
+        if lost:
+            self.out("improve lists the lines that no longer reach their command, until the next check.")
+        elif not any(astray for _, astray in results.values()):
+            self.out("Every line reaches its command.")
+
     def trace(self, words):
         """Show the judgements the latest run asked for and where each answer came from, or set
-        one of them as the user's own."""
+        one of them as the user's own. With a command and a judgement, show or set what is on
+        record for it whatever run it came from."""
+        if words and words[0] in self.table:
+            self.on_record(words)
+            return
         asked = cases.latest_run()
         if not asked:
             self.out("No command has asked for a judgement yet.")
@@ -440,7 +509,7 @@ class Shell:
                       f"more widely, rule {question['command']} {question['name']} makes a new one from the record."
                       if case["by"] == "rule" and case["answer"] != answer else ""))
             return
-        self.out(f"{asked[0]['question']['command']} asked for {len(asked)} judgement(s) the last time it needed any:")
+        self.out(f"{asked[0]['question']['command']} asked for {count(len(asked), 'judgement')} the last time it needed any:")
         for number, case in enumerate(asked, 1):
             question, now = case["question"], cases.judged(case["question"])
             how = {"student": f"the student, {case.get('seconds') or 0:.1f} s", "rule": "a rule",
@@ -450,14 +519,73 @@ class Shell:
         other = next(choice for choice in asked[0]["question"]["choices"] if choice != asked[0]["answer"])
         self.out(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}.")
 
+    def judged_here(self):
+        """The judgements the commands in the table ask for, as the end of a usage line."""
+        known = [f"{name} {one}" for name in sorted(self.table) for one in self.table[name].judges]
+        return f": {', '.join(known)}." if known else ". No command here asks for one."
+
+    def on_record(self, words):
+        """Show every answer on record for one judgement, or set the answer for one value."""
+        command = self.table[words[0]]
+        if len(words) < 2 or words[1] not in command.judges:
+            self.out("Usage: trace COMMAND NAME, for a judgement a command asks for" + self.judged_here())
+            return
+        name, found = words[1], rules.answers(command.name, words[1])
+        if not found:
+            self.out(f"Nothing is on record for {name} in {command.name} yet. It asks when it runs.")
+            return
+        question, choices, listed = found
+        if len(words) == 2:
+            mine = sum(who == "user" for _, _, who in listed)
+            other = next(choice for choice in choices if choice != listed[0][1])
+            self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}" +
+                     (f", {mine} of them set by you" if mine else "") + ":\n" + "\n".join(rules.summary(listed)) +
+                     f"\nTo set one yourself: trace {command.name} {name} VALUE is ANSWER, such as "
+                     f"trace {command.name} {name} {listed[0][0]} is {other}.")
+            return
+        value, _, answer = " ".join(words[2:]).rpartition(" is ")
+        if not value or answer not in choices:
+            self.out(f"Usage: trace {command.name} {name} VALUE is ANSWER, with one of its answers: {' or '.join(choices)}.")
+            return
+        cases.record("judgement", {"command": command.name, "name": name, "ask": question, "choices": choices,
+                                   "value": value}, answer, "user", "accepted")
+        shape = lambda text: (rules.varying(text) or (text, "", ""))[::2]      # the text around its first number
+        self.out(f"Set: {command.name} takes {name} of {value} as {answer} from now on." +
+                 ("" if any(shape(known) == shape(value) for known, _, _ in listed) else
+                  f"\nThe values on record look like {listed[0][0]}. One written another way will not come up when "
+                  f"{command.name} runs."))
+
+    def spread(self, command, name, reason):
+        """Too little is on record for a rule. When the manifest says between which numbers the
+        judged value lies, offer to put values from across that range to the student, which is
+        free. Returns whether that was done."""
+        found = rules.answers(command.name, name)
+        asked = [case["question"]["value"] for case in cases.judgements(command.name, name) if case.get("run")]
+        example = next((value for value in reversed(asked + [value for value, _, _ in (found[2] if found else [])])
+                        if rules.varying(value)), None)
+        if name not in command.ranges or not example or not self.student:
+            self.out(f"No rule for {name} in {command.name} yet: {reason}.")
+            return False
+        (low, high), (question, choices, listed) = command.ranges[name], found
+        if not self.confirm(f"No rule for {name} in {command.name} yet: {reason}.\nIts values lie between {low:g} and "
+                            f"{high:g}. Put up to {rules.COARSE + rules.FINER} of them to {self.student.model} first, to "
+                            "see where it draws the line? That is free.", default=True):
+            return False
+        try:
+            put = rules.spread(lambda value: self.minds.sample(command, name, question, value, choices), example,
+                               {value: answer for value, answer, _ in listed}, low, high)
+        except sandbox.Refused as refusal:
+            self.out(f"That stopped early: {refusal}.")
+            return False
+        self.out(f"{self.student.model} was asked about {count(len(put), 'value')}.")
+        return True
+
     def rule(self, words):
         """Have the teacher turn the answers on record for one judgement into a rule, try it on
         every one of them, and use it if the user agrees. Every pass through the loop is one call."""
         command = self.table.get(words[0]) if len(words) == 2 else None
         if not command or words[1] not in command.judges:
-            known = [f"{name} {one}" for name in sorted(self.table) for one in self.table[name].judges]
-            self.out("Usage: rule COMMAND NAME, for a judgement a command asks for" +
-                     (f": {', '.join(known)}." if known else ". No command here asks for one."))
+            self.out("Usage: rule COMMAND NAME, for a judgement a command asks for" + self.judged_here())
             return
         name = words[1]
         if not self.teacher:
@@ -469,8 +597,21 @@ class Shell:
             return
         try:
             question, choices, listed = rules.recorded(command.name, name)
+            asked_more = False
         except rules.Unsuitable as reason:
-            self.out(f"No rule for {name} in {command.name} yet: {reason}.")
+            asked_more = self.spread(command, name, reason)
+            if not asked_more:
+                return
+            try:
+                question, choices, listed = rules.recorded(command.name, name)
+            except rules.Unsuitable as reason:
+                self.out(f"Still no rule for {name} in {command.name}: {reason}.")
+                return
+        self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}:\n" + "\n".join(rules.summary(listed)))
+        # Typing rule was a yes to one call. What the student just said may change the user's mind.
+        if asked_more and not self.confirm(f"Ask {self.teacher.model} for a rule from these? That is one call to it.",
+                                           default=False):
+            self.out(f"Left there. The answers stay on record; trace {command.name} {name} shows them.")
             return
         (shown, held), earlier = rules.split(listed), None
         current = rules.installed().get((command.name, name))
@@ -478,8 +619,9 @@ class Shell:
             self.out(f"A rule for it is in use already, made from {current['cases']} answers on {current['date']}. "
                      "A new one would take its place.")
         while True:
-            self.out(f"Asking {self.teacher.model}{' again' if earlier else ''} for a rule from {len(shown)} answer(s) "
-                     f"on record for {name} in {command.name}. {len(held)} more are held back to test it.")
+            self.out(f"Asking {self.teacher.model}{' again' if earlier else ''} for a rule from "
+                     f"{count(len(shown), 'answer')} on record for {name} in {command.name}. {len(held)} more "
+                     f"{'is' if len(held) == 1 else 'are'} held back to test it.")
             record = {"date": datetime.date.today().isoformat(), "command": command.name, "name": name,
                       "model": self.teacher.model}
             try:
@@ -541,8 +683,9 @@ class Shell:
                      "delegate WHAT YOU NEED asks the teacher, which can write a new command; needs lists\n"
                      "what nothing could do yet, and forget NUMBER drops one. trace shows the judgements\n"
                      "the latest command asked for, and rule COMMAND NAME has the teacher turn one into\n"
-                     "code. stats counts who answered. help NAME explains a command and says what it may\n"
-                     "touch; each runs in a sandbox that holds only that. exit leaves.")
+                     "code. improve lists what lo-s could do better, with what to type for each, and stats\n"
+                     "counts who answered. help NAME explains a command and says what it may touch; each\n"
+                     "runs in a sandbox that holds only that. exit leaves.")
             return
         for name in names:
             if name in BUILTINS:

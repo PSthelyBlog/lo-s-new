@@ -17,7 +17,8 @@ holds is kept for what can be built from it later. There are two kinds of questi
     answer      one of the choices
     by          student, rule, memory when a recorded answer was used again, or user for an
                 answer the user set themselves
-    run         the run of the command it was asked in; a user's answer belongs to no run
+    run         the run of the command it was asked in; a user's answer belongs to no run, and
+                neither does one the student gave when it was asked on purpose (spread: true)
 """
 import datetime
 
@@ -102,10 +103,20 @@ def nearest(lines, to, count=3):
 
 
 def queue(line, by):
-    """Add a line to the queue of needs. Returns its number, which it keeps for good."""
+    """Add a line to the queue of needs, unless it is waiting there already. Returns its number,
+    which it keeps for good."""
+    for number, need in waiting().items():
+        if need["line"] == line:
+            return number
     number = sum("line" in entry for entry in state.read("needs")) + 1
     state.append("needs", {"number": number, "date": datetime.date.today().isoformat(), "line": line, "by": by})
     return number
+
+
+def teacher_said():
+    """The kind of answer the teacher last gave to each thing it was asked through delegate:
+    run, write, ask or cannot, by the words it was asked about."""
+    return {call["words"]: call["answer"]["answer"] for call in state.read("delegations") if "answer" in call}
 
 
 def drop(number):

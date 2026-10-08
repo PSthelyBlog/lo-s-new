@@ -17,6 +17,7 @@ class PluginsTest(Folders):
                          {"fs.find", "fs.list", "fs.move", "fs.usage", "note.add", "note.list", "sys.health", "sys.status"})
         self.assertEqual((table["sys.health"].judges, table["sys.health"].asks, table["sys.status"].judges),
                          (("memory", "temperature"), (), ()))
+        self.assertEqual(table["sys.health"].ranges, {"memory": (1, 99), "temperature": (20, 110)})
         self.assertEqual((table["fs.move"].effect, table["note.add"].effect, table["fs.find"].effect),
                          ("destructive", "write", "read"))
         self.assertEqual(table["fs.list"].params["path"], plugins.Param("directory, default the current one", "read", "."))
@@ -44,8 +45,10 @@ class PluginsTest(Folders):
             "It sees no other file of yours and reaches nothing else on the network."])
 
     def test_a_manifest_says_which_models_a_command_reaches_and_what_for(self):
-        table, problems = self.plugin(manifest('judges = ["size", "age"]\nasks = ["student", "teacher"]'), CODE)
-        self.assertEqual((problems, table["x.go"].judges, table["x.go"].asks), ([], ("size", "age"), ("student", "teacher")))
+        table, problems = self.plugin(manifest('judges = ["size", "age"]\nasks = ["student", "teacher"]\n'
+                                               'ranges = { size = [0, 2.5] }'), CODE)
+        self.assertEqual((problems, table["x.go"].judges, table["x.go"].asks, table["x.go"].ranges),
+                         ([], ("size", "age"), ("student", "teacher"), {"size": (0, 2.5)}))
         self.assertEqual(plugins.touches(table["x.go"])[1:], [
             "It sees no other file of yours and has no network.",
             "It asks for a judgement of size, age: one of a few answers for a value, from what is on record, a rule or "
@@ -84,6 +87,8 @@ class PluginsTest(Folders):
             "reads": (manifest('reads = ["proc"]'), CODE, "reads is a list of absolute paths"),
             "judges": (manifest('judges = ["How big?"]'), CODE, "judges is a list of names in lower-case letters"),
             "asks": (manifest('asks = ["student", "oracle"]'), CODE, "asks is a list holding student or teacher"),
+            "range": (manifest('judges = ["size"]\nranges = { size = [5, 1] }'), CODE, "the lowest and the highest number"),
+            "ranged": (manifest('judges = ["size"]\nranges = { age = [1, 5] }'), CODE, "for a judgement listed in judges"),
             "missing": (manifest(), "def do_other():\n    pass\n", "does not define do_go"),
             "params": (manifest(), "def do_go(path=None):\n    pass\n", "exactly the declared parameters: path, text"),
             "defaults": (manifest(), "def do_go(path, text=None):\n    pass\n", "must give every parameter of do_go a default"),
