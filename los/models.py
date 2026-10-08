@@ -43,10 +43,13 @@ class ClaudeCli:
         # A neutral directory, so no project instructions or memory reach the model. It is made for
         # this call and removed after it, so nothing depends on a folder outliving a long session.
         with tempfile.TemporaryDirectory(prefix="los-claude-") as cwd:
-            proc = subprocess.run(cmd, input=user, capture_output=True, text=True, cwd=cwd, timeout=300)
-        reply = json.loads(proc.stdout)
-        if reply.get("is_error"):
-            raise RuntimeError(reply.get("result"))
+            proc = subprocess.run(cmd, input=user, capture_output=True, text=True, cwd=cwd, timeout=600)
+        try:
+            reply = json.loads(proc.stdout)
+        except ValueError:
+            raise RuntimeError(f"claude said: {(proc.stderr or proc.stdout).strip()[:300] or 'nothing'}")
+        if reply.get("is_error") or "structured_output" not in reply:
+            raise RuntimeError(f"claude gave no answer in the form asked for: {str(reply.get('result'))[:300]}")
         return reply["structured_output"], {
             "seconds": round(time.time() - start, 2),
             "output_tokens": reply.get("usage", {}).get("output_tokens"),

@@ -14,16 +14,22 @@ process of its own (see sandbox.py), which is given what the manifest declares a
     effect = "destructive"              # read (the default), write or destructive
     reads = ["/proc"]                   # fixed paths it may read
     data = "write"                      # its plugin's data folder: read or write
+    hosts = ["api.example.org"]         # hosts it may fetch from, through the core
 
     [commands.move.params]
     sort_by = "name, size or time"      # a hint, for whoever fills the value in
     source = { hint = "what to move", path = "write" }
     path = { hint = "directory", path = "read", default = "." }
+    dest = { hint = "name of the copy", path = "create", default = "{source}.bak" }
 
 A parameter declared as a path is how a command reaches the user's files: the path the user
-gives is the one the sandbox holds. The effect is a promise the sandbox keeps. A read command
-can change nothing. A write command can change its plugin's data folder. Only a destructive
-command can change a path.
+gives is the one the sandbox holds. `read` shows it. `create` lets the command make it, if
+nothing is there yet. `write` lets it change what is there, and move or remove it through the
+core. A default stands for a path left out, and can be built from other parameters.
+
+The effect is a promise the sandbox keeps. A read command can change nothing. A write command
+can add: to its plugin's data folder, and a path it was given to create. Only a destructive
+command can change or remove what exists.
 """
 import ast
 import dataclasses
@@ -31,13 +37,15 @@ import keyword
 import os
 import pathlib
 import re
+import string
 import tomllib
 
 from .parse import flag
 
 EFFECTS = ("read", "write", "destructive")
-ACCESS = ("read", "write")
+ACCESS = ("read", "create", "write")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
+HOST = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
 
 
 class ManifestError(Exception):
@@ -47,8 +55,8 @@ class ManifestError(Exception):
 @dataclasses.dataclass(frozen=True)
 class Param:
     hint: str = ""              # for whoever fills the value in, possibly empty
-    path: str = ""              # read or write when the value names a file or folder, else empty
-    default: str = ""           # for a path: what leaving it out stands for, such as "."
+    path: str = ""              # read, create or write when the value names a file or folder, else empty
+    default: str = ""           # for a path: what leaving it out stands for, such as "." or "{source}.bak"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,6 +67,7 @@ class Command:
     effect: str = "read"        # read, write or destructive
     reads: tuple = ()           # fixed paths it may read
     data: str = ""              # read or write when it uses its plugin's data folder, else empty
+    hosts: tuple = ()           # hosts it may fetch from
     source: pathlib.Path = None  # the commands.py that defines do_<verb>
     written_by: str = ""        # the model that wrote it, when one did
 
@@ -117,31 +126,41 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: a verb is lower-case letters, digits and underscores")
     if not isinstance(entry, dict) or not isinstance(entry.get("params", {}), dict):
         raise ManifestError(f"{name} and its params are tables")
-    _only(entry, {"description", "effect", "reads", "data", "params"}, name)
+    _only(entry, {"description", "effect", "reads", "data", "hosts", "params"}, name)
     description, effect = entry.get("description"), entry.get("effect", "read")
-    reads, data = entry.get("reads", []), entry.get("data", "")
+    reads, data, hosts = entry.get("reads", []), entry.get("data", ""), entry.get("hosts", [])
     if not isinstance(description, str) or not description.strip():
         raise ManifestError(f"{name} needs a description")
     if effect not in EFFECTS:
         raise ManifestError(f"{name}: effect is one of {', '.join(EFFECTS)}, not {effect!r}")
     if not isinstance(reads, list) or not all(isinstance(path, str) and os.path.isabs(path) for path in reads):
         raise ManifestError(f"{name}: reads is a list of absolute paths")
-    if data not in ("", *ACCESS):
+    if data not in ("", "read", "write"):
         raise ManifestError(f"{name}: data is read or write, not {data!r}")
+    if not isinstance(hosts, list) or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts):
+        raise ManifestError(f"{name}: hosts is a list of host names such as api.example.org")
     params = {key: _param(name, key, value) for key, value in entry.get("params", {}).items()}
+    for key, param in params.items():   # a default may be built from other parameters, and from nothing else
+        for _, field, spec, conversion in string.Formatter().parse(param.default):
+            if field is not None and (field == key or field not in params or spec or conversion):
+                raise ManifestError(f"{name}: the default of {key} may name other parameters in braces, "
+                                    f"and {{{field}}} is not one")
 
     # The effect is what the user is told before they agree, so the grants may not exceed it.
     changed = [flag(key) for key, param in params.items() if param.path == "write"]
+    created = [flag(key) for key, param in params.items() if param.path == "create"]
     if changed and effect != "destructive":
         raise ManifestError(f"{name} is marked {effect} but asks to change {', '.join(changed)}, "
                             "and only a destructive command may change a path")
+    if created and effect == "read":
+        raise ManifestError(f"{name} is marked read but asks to create {', '.join(created)}")
     if data == "write" and effect == "read":
         raise ManifestError(f"{name} is marked read but asks to change its data folder")
 
     problem = _signature(functions.get(f"do_{verb}"), params)
     if problem:
         raise ManifestError(f"{name}: commands.py {problem.format(function=f'do_{verb}')}")
-    return Command(name, description, params, effect, tuple(reads), data, source, written_by)
+    return Command(name, description, params, effect, tuple(reads), data, tuple(hosts), source, written_by)
 
 
 def _param(name, key, value):
@@ -154,7 +173,7 @@ def _param(name, key, value):
         raise ManifestError(f"{name}: parameter {key} is a hint, or a table of hint, path and default")
     param = Param(value.get("hint", ""), value.get("path", ""), value.get("default", ""))
     if param.path not in ("", *ACCESS):
-        raise ManifestError(f"{name}: the path of {key} is read or write, not {param.path!r}")
+        raise ManifestError(f"{name}: the path of {key} is read, create or write, not {param.path!r}")
     if param.default and not param.path:
         raise ManifestError(f"{name}: only a path can have a default, and {key} is not declared as one")
     return param
@@ -187,11 +206,16 @@ def touches(command):
     lines = []
     if given("read"):
         lines.append(f"It may read what you give as {given('read')}.")
+    if given("create"):
+        lines.append(f"It may create what you give as {given('create')}, if nothing is there yet.")
     if given("write"):
-        lines.append(f"It may change or move what you give as {given('write')}.")
+        lines.append(f"It may change, move or remove what you give as {given('write')}.")
     if command.reads:
         lines.append(f"It may read {', '.join(command.reads)}.")
     if command.data:
         lines.append(f"It may read {'and change ' if command.data == 'write' else ''}"
                      f"the data lo-s keeps for the {command.plugin} commands.")
-    return lines + ["It sees no other file of yours and has no network."]
+    if command.hosts:
+        lines.append(f"It may fetch pages from {', '.join(command.hosts)}.")
+    return lines + ["It sees no other file of yours and " +
+                    ("reaches nothing else on the network." if command.hosts else "has no network.")]

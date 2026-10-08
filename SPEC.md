@@ -58,9 +58,11 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   parses code but never runs a command's code itself. Each command runs as a process of its own
   under bubblewrap, with no network, no view of the home folder, a read-only root and an
   environment of its own. It holds:
-  - **paths the user named.** A parameter can be declared as a path, for reading or for writing.
-    The core makes the value absolute, fills in a declared default such as the current
-    directory, and binds that one path into the sandbox at its own absolute path;
+  - **paths the user named.** A parameter can be declared as a path: `read` to see it, `create`
+    to make it where nothing is yet, `write` to change what is there. The core makes the value
+    absolute and fills in a declared default, which is fixed, such as the current directory, or
+    built from other parameters, such as `{source}.bak`. That one path is in the sandbox, at its
+    own absolute path, and nothing around it;
   - **fixed paths** the manifest lists, read-only. `/proc` is always a fresh one, never the
     host's, which would show every process of the user;
   - **its plugin's data folder**, when the manifest asks for it, for reading or for writing;
@@ -71,19 +73,27 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   parameters in and the result out, as JSON lines.
 - **Proposed.** A command asks the core for what it cannot do itself. The core checks each
   request against the manifest and what the user typed, and records it in `state/calls.jsonl`,
-  refusals included. Built: `move`. Planned: `fetch` a URL on a listed host, `run` a listed
-  program outside the sandbox, ask a model.
+  refusals included. Built: `move`, `remove` and `fetch`. Planned: `run` a listed program
+  outside the sandbox, and asking a model.
 - **Proposed, and a change from the first design.** A path bound into a sandbox can be read and
   changed in place, but not renamed or removed: that is a change to the folder around it, which
   the command does not hold. Binding that folder would hand over everything else in it. So the
-  core moves things, between paths the user named for writing or inside folders they named for
-  writing, and it never replaces anything. A link inside such a folder that leads out of it does
-  not count.
+  core moves and removes things, on paths the user named for writing or inside folders they
+  named for writing. A move never replaces anything. A link inside such a folder that leads out
+  of it does not count.
+- **Proposed.** Making something new works the other way round. For a path it may create, the
+  command is given an empty scratch folder in place of the folder around that path. It builds
+  the new thing there with ordinary code. When it ends well the core moves that one thing into
+  place, and whatever else it left there is thrown away. If it fails, nothing appears.
+- **Proposed.** `fetch` gets a page for a command with an https GET, from a host its manifest
+  lists and from no other. A page that sends the request on to another host is refused.
 - **Proposed.** The effect of a command is `read`, `write` or `destructive`, and each is a promise
   the sandbox keeps, not a label:
   - `read` can change nothing that outlasts the run. Its paths and its data folder are read-only.
-  - `write` can change its plugin's data folder, and no path.
-  - `destructive` can change the paths the user named for writing, and move them through the core.
+  - `write` can add and cannot change what exists: it may create a path it was given for that,
+    and change its plugin's data folder.
+  - `destructive` can change what is at the paths the user named for writing, and move or remove
+    them through the core.
 
   A manifest that asks for more than its effect allows is not loaded.
 - **Proposed.** A typed command runs as typed. A destructive one asks first.
@@ -92,12 +102,12 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 - **Proposed.** On a machine where bubblewrap cannot build a sandbox, lo-s says so when it starts.
   Commands nobody generated run without one. A command written by a model does not run, unless
   the user sets `LOS_NO_SANDBOX=1`.
-- **Open.** How a command creates a path it was given that does not exist yet, such as the copy
-  made by a backup command. A file created beside a granted path is refused today, because the
-  root is read-only. The proposal: the command builds the new thing in a scratch folder it sees
-  at that place, and the core moves it in when the command succeeds. Then `write` could mean
-  "adds, and changes nothing that exists".
-- **Open.** Removing a named path: a `remove` call like `move`, when a command first needs it.
+- **Open.** A command cannot put something new into a folder that exists, as in "copy this into
+  backups": the path it is given to create has to be the new name itself. A default built from
+  other parameters covers the usual case.
+- **Open.** The scratch folder for a new path is made inside the folder it stands in for, and is
+  removed when the command ends. If lo-s is killed in between, a hidden `.los-new-` folder
+  stays behind. It holds only what the command was making.
 
 ## Cases and the order of asking
 
@@ -122,36 +132,67 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   path in a remembered line points wherever the user is when they type it again.
 - **Proposed.** `wrong` takes the latest choice back, whether it ran or not: the line is no longer
   remembered that way, and the shell offers to queue it as a need.
+- **Proposed.** When the student gives a line the very answer the user took back for it, the
+  answer is shown as one they said was wrong, and Enter no longer runs it. A yes still does,
+  and settles the line. Another answer to that line, or the same answer to another line, is
+  treated as new.
 - **Proposed.** `stats` counts the lines memory answered and the lines the student answered, and
   the model time memory saved.
 - **Proposed.** When a command is installed, remembered lines stay where they are. The ones
   closest to the new command are asked of the student again, as a suggestion only, and the user
-  chooses whether to move one. Not built yet: it belongs with installing.
+  chooses whether to move one.
 - **Proposed.** The student is not shown the user's confirmed lines as examples. It was measured
   (`experiments/routing/`): with each line's three nearest confirmed lines shown, the student
   picked the teacher's command exactly as often, was no steadier as commands were added, and
   took 0.8 seconds longer over each line.
+- **Proposed.** `means COMMAND --parameter value` is the user saying what the latest line means.
+  It is recorded as theirs, remembered for that line and run. The student often picks the right
+  command with a wrong value, such as `home` for the home folder; this settles such a line
+  without a model.
 - **Open.** A line the student finds nothing for is queued without a question, so a typing
   mistake lands in the queue too. `forget` drops it.
-- **Open.** The student often picks the right command with a wrong value, such as `home` for the
-  home folder. The full form makes that visible before anything runs, but the user can only
-  decline. A way to say what the line does mean, which would settle it for good, is not built.
 
 ## The teacher step
 
-Not built yet.
-
 - **Proposed.** `delegate WHAT YOU NEED` sends the user's words to the teacher, and
   `delegate NUMBER` a queued need. One call gives one of four answers: **run** a command that
-  exists, **write** a new one, **ask** one question, or **cannot**, with the reason.
-- **Proposed.** A written command arrives complete: name, candidate descriptions, effect,
-  parameters, what it needs granted, code, lines that should reach it, lines that look similar
-  and should not, and checks of what it does.
-- **Proposed.** Before the user is asked, the core does what is free: it reads the manifest and
-  parses the code, runs the checks in the sandbox, and tries each description on the student.
-  The user then sees what the command does, what it may touch, how it fared, and the code.
+  exists, **write** a new one, **ask** one question, or **cannot**, with the reason. There is no
+  separate step for writing.
+- **Proposed.** The teacher is told how lo-s works, the contract for commands, the command
+  table, which models fill which role and how they are reached, and one plugin as an example of
+  the style. It returns text only.
+- **Proposed.** A command to run is shown in full and runs if the user agrees. Agreeing settles
+  those words, so that typed plainly later they are answered from memory.
+- **Proposed.** A question is put to the user, and their answer goes back with their words in
+  another call.
+- **Proposed.** A written command arrives complete: name, two or three candidate descriptions,
+  effect, parameters, what it needs granted, code, lines that should reach it, lines that look
+  similar and should not, and checks of what it does.
+- **Proposed.** Before the user is asked, the core does what is free:
+  1. It writes the proposal into a scratch folder and reads it back the way any plugin is read.
+  2. It runs the checks in the sandbox, each in an empty folder with its own data folder. A check
+     gives parameters, files to set up, whether to expect output or an error, words the text
+     must contain, and what must be on disk afterwards. Checks of a command that lists hosts
+     use the network only if the user allows it.
+  3. It asks the student the lines once for each description, with the command in the table,
+     and keeps the description under which most lines go where they belong.
+- **Proposed.** The user then sees what the command does, what it may touch, how its checks and
+  its lines fared, and the code. They decide. Installing writes the plugin folder, with the
+  words it was written for, which model wrote it and when, and everything the teacher returned.
+- **Proposed.** When the words were a request, it is carried out once the command exists.
 - **Proposed.** Nothing is removed afterwards on a model's say-so. A poor score is information
   for the user, not a gate.
+- **Proposed.** When something went wrong with a proposal, the user can send it back with what
+  was found, for one more call. No call is repeated without the user saying so, and every
+  answer is kept in `state/delegations.jsonl`, installed or not.
+- **Proposed.** When no answer comes back, the words can be queued as a need to ask again later.
+- **Proposed.** A need the teacher answered with cannot stays queued, and `needs` says so beside
+  it, because asking again is another call.
+- **Proposed.** The teacher is told to give the reason for a cannot in a sentence or two, to name
+  a command in the table that does part of it, and to offer nothing else: the user cannot reply
+  to it. This wording has not been tried on the teacher yet.
+- **Proposed.** The teacher is told never to write a catch-all command, and never to contact a
+  service to find out where the user is.
 
 ## Judgements
 
@@ -194,7 +235,7 @@ Not built yet.
 
 ## Built so far
 
-Steps 1 and 2 of five: the core, and plain language.
+Steps 1 to 3 of five: the core, plain language, and the teacher step.
 
 - Manifests and the command table (`los/plugins.py`): parameters with hints, paths and defaults,
   fixed paths, the data folder, the effect, and the check that grants do not exceed it.
@@ -225,6 +266,22 @@ Steps 1 and 2 of five: the core, and plain language.
 - Measured on the student (`experiments/routing/`), with the prompt cache on: a line takes about
   a second whether the table holds 10, 50 or 200 commands, and the first line after the table
   changes takes 2 to 9 seconds. Nearest confirmed lines did not clearly help and are left out.
+- Paths a command may create, defaults built from other parameters, and the `remove` and
+  `fetch` calls (`los/sandbox.py`).
+- The teacher step (`los/teach.py`, `delegate` in the shell): the four answers, the trial of a
+  proposal, installing, sending a proposal back, and suggestions for remembered lines.
+- `means`, and two corrections: `wrong` names what it takes back in full, and `stats` counts what
+  memory saved at the student's usual time for a line.
+- After the owner's own trial of the teacher step: an answer taken back is marked when the
+  student gives it again, a declined choice points to `means` as well as `wrong`, and `needs`
+  marks what the teacher has already said cannot be done.
+- Tried on 2026-10-08 on the owner's four requests, in scratch folders, with four teacher calls.
+  "order a large pizza" got cannot. The other three each got a command in one call: `fs.copy`,
+  `fs.delete` and `weather.forecast`. Each passed all five of its own checks the first time, and
+  9, 10 and 9 of their 10 lines went where they belong under the description that was kept. The
+  weather command listed two hosts of one forecast service and fetched from no other. With it
+  installed, a question about the temperature that the owner had accepted before was still
+  answered from memory as `sys.status`; asked afresh, the student alone sent it nowhere.
 
 ## What the first build measured
 

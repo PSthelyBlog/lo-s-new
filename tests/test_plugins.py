@@ -27,19 +27,31 @@ class PluginsTest(Folders):
         self.assertEqual(plugins.touches(table["x.go"]), [
             "It may read what you give as --path.", "It may read /proc.",
             "It may read the data lo-s keeps for the x commands.", "It sees no other file of yours and has no network."])
+        table, problems = self.plugin(
+            manifest('effect = "write"\nhosts = ["api.example.org", "example.org"]',
+                     'path = { path = "create", default = "{text}.bak" }\ntext = { path = "read" }').replace('"x"', '"y"'),
+            CODE, folder="adds")
+        self.assertEqual(problems, [])
+        self.assertEqual((table["y.go"].hosts, table["y.go"].params["path"].default),
+                         (("api.example.org", "example.org"), "{text}.bak"))
+        self.assertEqual(plugins.touches(table["y.go"]), [
+            "It may read what you give as --text.", "It may create what you give as --path, if nothing is there yet.",
+            "It may fetch pages from api.example.org, example.org.",
+            "It sees no other file of yours and reaches nothing else on the network."])
 
     def test_a_command_written_by_a_model_says_so(self):
         table, _ = self.plugin(manifest() + '[origin]\nwritten_by = "some-model"\n', CODE)
         self.assertEqual(table["x.go"].written_by, "some-model")
 
     def test_a_grant_may_not_exceed_the_effect(self):
-        for command, params, said in (
+        for number, (command, params, said) in enumerate((
                 ('effect = "read"', 'path = { path = "write" }\ntext = ""', "marked read but asks to change --path"),
+                ('', 'path = { path = "create" }\ntext = ""', "marked read but asks to create --path"),
                 ('effect = "write"', 'path = { path = "write" }\ntext = ""', "only a destructive command may change a path"),
-                ('data = "write"', 'path = ""\ntext = ""', "marked read but asks to change its data folder")):
-            table, problems = self.plugin(manifest(command, params), CODE, folder=str(len(command + params)))
+                ('data = "write"', 'path = ""\ntext = ""', "marked read but asks to change its data folder"))):
+            table, problems = self.plugin(manifest(command, params), CODE, folder=f"fault-{number}")
             self.assertEqual(table, {}, command)
-            self.assertIn(said, problems[0])
+            self.assertIn(said, problems[-1])
         table, problems = self.plugin(manifest('effect = "destructive"\ndata = "write"', 'path = { path = "write" }\ntext = ""'),
                                       CODE, folder="allowed")
         self.assertIn("x.go", table)
@@ -47,9 +59,14 @@ class PluginsTest(Folders):
     def test_a_faulty_plugin_is_left_out_and_the_others_load(self):
         faults = {
             "effect": (manifest('effect = "maybe"'), CODE, "effect is one of read, write, destructive"),
-            "entry": (manifest('hosts = ["example.org"]'), CODE, "an entry the core does not know: hosts"),
-            "access": (manifest(params='path = { path = "all" }\ntext = ""'), CODE, "the path of path is read or write"),
+            "entry": (manifest('programs = ["git"]'), CODE, "an entry the core does not know: programs"),
+            "access": (manifest(params='path = { path = "all" }\ntext = ""'), CODE, "the path of path is read, create or write"),
             "default": (manifest(params='path = ""\ntext = { default = "x" }'), CODE, "only a path can have a default"),
+            "built": (manifest(params='path = { path = "read", default = "{other}.bak" }\ntext = ""'), CODE,
+                      "{other} is not one"),
+            "format": (manifest(params='path = { path = "read", default = "{text.__class__}" }\ntext = ""'), CODE,
+                       "is not one"),
+            "hosts": (manifest('hosts = ["https://example.org/x"]'), CODE, "hosts is a list of host names"),
             "reads": (manifest('reads = ["proc"]'), CODE, "reads is a list of absolute paths"),
             "missing": (manifest(), "def do_other():\n    pass\n", "does not define do_go"),
             "params": (manifest(), "def do_go(path=None):\n    pass\n", "exactly the declared parameters: path, text"),

@@ -47,8 +47,8 @@ class ShellTest(ShellCase):
         shell.handle("help help nope")
         self.assertEqual(self.shown[-2:], ["help lists the commands. help NAME explains one and says what it may touch.",
                                            "There is no command named nope."])
-        shell.handle("help wrong needs forget stats exit")
-        self.assertEqual(len(self.shown), 9)
+        shell.handle("help wrong means needs forget delegate stats exit")
+        self.assertEqual(len(self.shown), 11)
 
 
 class HelpTest(Folders):
@@ -59,8 +59,8 @@ class HelpTest(Folders):
         self.assertEqual(shown, [
             "Move or rename a file or directory\nUsage: fs.move [--source VALUE] [--dest VALUE]\n"
             "  --source  what to move\n  --dest    new name, or the directory to move it into",
-            "It can change or move what you name, so it asks before it runs.\n"
-            "It may change or move what you give as --source, --dest.\n"
+            "It can change or remove what you name, so it asks before it runs.\n"
+            "It may change, move or remove what you give as --source, --dest.\n"
             "It sees no other file of yours and has no network.",
             "Show battery, CPU, memory or temperature status\nUsage: sys.status [--what VALUE]\n"
             "  --what  battery, cpu, memory or temperature; default all",
@@ -68,7 +68,7 @@ class HelpTest(Folders):
             "It sees no other file of yours and has no network.",
             "Save a short text note\nUsage: note.add [--text VALUE] [--tag VALUE]\n"
             "  --text  the note\n  --tag   one word to file it under",
-            "It changes what lo-s keeps for its plugin and no file of yours, so it runs as soon as you type it.\n"
+            "It can add something new and cannot change what exists, so it runs as soon as you type it.\n"
             "It may read and change the data lo-s keeps for the note commands.\n"
             "It sees no other file of yours and has no network."])
 

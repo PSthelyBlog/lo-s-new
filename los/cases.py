@@ -8,7 +8,8 @@ holds is kept for what can be built from it later.
     kind        line: which command a typed line means
     question    the line
     answer      {"command": NAME or null, "args": {...}}
-    by          student, or memory when an accepted case answered, or user for a verdict given later
+    by          student or teacher, memory when an accepted case answered, or user for what the
+                user said themselves: a choice taken back, or what a line means
     verdict     accepted, declined (it may be right and was not wanted), wrong, or empty
 """
 import datetime
@@ -21,22 +22,49 @@ def record(kind, question, answer, by, verdict="", **more):
                            "answer": answer, "by": by, "verdict": verdict, **more})
 
 
-def remembered(line, table):
-    """The case in which the user accepted a command for this exact line, if they have not taken
-    it back since and the command still exists with those parameters. Which other commands are
-    installed makes no difference."""
-    settled = None
+def settled(table):
+    """Every line the user has accepted a command for and not taken back since, as line -> the
+    case that settled it, as long as that command still exists with those parameters. Which other
+    commands are installed makes no difference."""
+    lines = {}
     for case in state.read("cases"):
-        if case["kind"] == "line" and case["question"] == line:
-            if case["verdict"] == "accepted":
-                settled = case
-            elif case["verdict"] == "wrong":
-                settled = None
-    if settled:
-        command = table.get(settled["answer"]["command"])
-        if command and set(settled["answer"]["args"]) <= set(command.params):
-            return settled
-    return None
+        if case["kind"] == "line" and case["verdict"] == "accepted":
+            lines[case["question"]] = case
+        elif case["kind"] == "line" and case["verdict"] == "wrong":
+            lines.pop(case["question"], None)
+    return {line: case for line, case in lines.items()
+            if case["answer"]["command"] in table
+            and set(case["answer"]["args"]) <= set(table[case["answer"]["command"]].params)}
+
+
+def remembered(line, table):
+    """The case in which the user accepted a command for this exact line, if there is one."""
+    return settled(table).get(line)
+
+
+def taken_back(line, answer):
+    """Whether the user said this answer was wrong for this exact line and has not accepted it
+    since. A model that gives it again is repeating a known mistake."""
+    wrong = False
+    for case in state.read("cases"):
+        if (case["kind"], case["question"], case["answer"]) == ("line", line, answer) and case["verdict"] in ("accepted", "wrong"):
+            wrong = case["verdict"] == "wrong"
+    return wrong
+
+
+def _trigrams(text):
+    text = f"  {' '.join(text.lower().split())}  "
+    return {text[i:i + 3] for i in range(len(text) - 2)}
+
+
+def nearest(lines, to, count=3):
+    """The lines that share the most character trigrams with any of the lines in `to`, nearest
+    first. A plain measure of likeness, with no model in it."""
+    def likeness(line):
+        mine = _trigrams(line)
+        return max((len(mine & _trigrams(other)) / len(mine | _trigrams(other)) for other in to), default=0)
+
+    return sorted(lines, key=lambda line: -likeness(line))[:count]
 
 
 def queue(line, by):

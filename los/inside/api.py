@@ -29,3 +29,17 @@ def move(source, dest):
     Only a command whose effect is destructive may call this.
     """
     _core("move", source=str(source), dest=str(dest))
+
+
+def remove(path):
+    """Delete something the user named, a folder with everything in it. `path` is a path the user
+    gave for writing, or something inside a folder they gave for writing. Only a command whose
+    effect is destructive may call this."""
+    _core("remove", path=str(path))
+
+
+def fetch(url):
+    """The text of a page, fetched by the core with an https GET. The sandbox has no network of
+    its own. The host has to be one the manifest lists under `hosts`; anything else is refused.
+    CommandError is raised when the page cannot be had."""
+    return _core("fetch", url=str(url))

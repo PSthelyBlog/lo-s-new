@@ -14,10 +14,15 @@ The command and the core talk over one socket, in JSON lines. The first line car
 run and its parameters, and the last says how it ended. In between, the command can ask the core
 for what it cannot do itself. Each request is checked against the grant and recorded.
 
-There is one such request so far, `move`. A path bound into the sandbox can be read and changed
-in place, but not renamed or removed: that changes the folder around it, which the command does
-not hold. Giving it that folder would give it everything else in there too. So the core does the
-move, between paths the user named.
+A path bound into the sandbox can be read and changed in place, but not renamed or removed: that
+changes the folder around it, which the command does not hold. Giving it that folder would give
+it everything else in there too. So the core does it: `move` and `remove`, on paths the user
+named. `fetch` gets a page from a host the manifest lists, since the sandbox has no network.
+
+Making something new works the other way round. For a path the command may create, it is given
+an empty scratch folder in place of the folder around that path. It builds the new thing there
+with ordinary code, and when it ends well the core moves that one thing into place. Whatever
+else it left there is thrown away, and if it fails nothing appears at all.
 """
 import dataclasses
 import datetime
@@ -30,6 +35,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import state
 
@@ -40,6 +48,8 @@ BOOT = ("import json, socket, sys; channel = socket.socket(fileno=int(sys.argv[1
         "start = json.loads(channel.readline()); names = {'__name__': 'los_runner'}; "
         "exec(compile(start['runner'], '<lo-s runner>', 'exec'), names); names['main'](channel, start)")
 ENVIRONMENT = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
+LARGEST = 2_000_000             # bytes of a page that fetch hands to a command
+OFFLINE = "the network is not used here"
 
 
 class Refused(Exception):
@@ -58,28 +68,40 @@ class Grant:
     """What one run of a command may touch."""
     args: dict              # the parameters as the command receives them, with every path made absolute
     paths: dict             # absolute path -> whether the command may change it
+    creates: list = dataclasses.field(default_factory=list)     # paths it may create; nothing is there yet
     proc: bool = False      # a /proc of its own
     data: str = ""          # its plugin's data folder, or empty
     data_writable: bool = False
+    hosts: tuple = ()       # hosts it may fetch from
+    offline: bool = False   # True when this run is to stay off the network whatever the manifest says
 
 
-def complete(command, args):
+def complete(command, args, base=None):
     """The parameters as the command will receive them: a path left out gets its default, and
-    every path is made absolute, from the current directory or the home folder."""
-    given = {}
+    every path is made absolute, from `base` (the current directory unless given) or the home
+    folder."""
+    given = {name: args[name] for name in command.params if args.get(name)}
     for name, param in command.params.items():
-        value = args.get(name) or param.default
-        if value:
-            given[name] = os.path.abspath(os.path.expanduser(value)) if param.path else value
+        if name not in given and param.default:
+            try:
+                given[name] = param.default.format(**given)     # "." as it is, "{source}.bak" from what was given
+            except KeyError:    # built from a parameter that was left out too
+                pass
+    for name, value in given.items():
+        if command.params[name].path:
+            given[name] = os.path.normpath(os.path.join(base or os.getcwd(), os.path.expanduser(value)))
     return given
 
 
-def grant(command, args):
+def grant(command, args, base=None):
     """Work out what this run may touch, from the manifest and the parameters the user gave."""
-    given, paths = complete(command, args), {}
+    given, paths, creates = complete(command, args, base), {}, []
     for name, value in given.items():
-        if command.params[name].path:
-            paths[value] = paths.get(value, False) or command.params[name].path == "write"
+        access = command.params[name].path
+        if access == "create" and not os.path.lexists(value):
+            creates.append(value)
+        elif access:    # something already at a path to create is there to be seen, and nothing more
+            paths[value] = paths.get(value, False) or access == "write"
     for path in command.reads:
         paths.setdefault(os.path.normpath(path), False)
     # The host's /proc shows every process of the user. The sandbox gets one of its own instead.
@@ -87,26 +109,72 @@ def grant(command, args):
     for path in proc:
         del paths[path]
     data = str(state.data(command.plugin)) if command.data else ""
-    return Grant(given, paths, bool(proc), data, command.data == "write")
+    return Grant(given, paths, creates, bool(proc), data, command.data == "write", command.hosts)
 
 
-def run(command, args):
+def run(command, args, base=None, data=None, offline=False):
     """Run a command with the parameters the user gave. Whatever the command does, the answer is
-    a Result: nothing it raises reaches the shell."""
+    a Result: nothing it raises reaches the shell.
+
+    A trial run can be kept away from the user's things: `base` is the folder relative paths start
+    from, `data` stands in for the plugin's data folder, and `offline` refuses every fetch."""
     in_the_open = os.environ.get("LOS_NO_SANDBOX") == "1"
     if not in_the_open and unusable():
         if command.written_by:
             return Result(f"It was written by a model ({command.written_by}), and commands cannot be sandboxed here: "
                           f"{unusable()}. Set LOS_NO_SANDBOX=1 to run it with all of your permissions.", ok=False)
         in_the_open = True
-    granted = grant(command, args)
+    granted = grant(command, args, base)
+    granted.offline = offline
+    if data and command.data:
+        granted.data = str(data)
+    stages = {}     # folder around a path to create -> the scratch folder that stands in for it
+    try:
+        if not in_the_open:
+            _stage(granted, stages)
+        result = _converse(command, granted, stages, in_the_open)
+        lost = _keep(granted, stages) if result.ok else []
+    except OSError as error:    # a scratch folder could not be made, or what was made could not be moved in
+        return Result(f"{error.strerror}: {error.filename}" if error.filename else str(error), ok=False)
+    finally:
+        for stage in stages.values():
+            shutil.rmtree(stage, ignore_errors=True)
+    return dataclasses.replace(result, text="\n".join([result.text] + lost).strip("\n")) if lost else result
+
+
+def _stage(granted, stages):
+    """Make a scratch folder for each folder the command may create something in. It is made
+    inside the folder it stands in for, so that moving the result into place is a rename."""
+    for path in granted.creates:
+        around = os.path.dirname(path)
+        # Inside a folder the command already holds there is nothing to stand in for.
+        held = any(os.path.commonpath([named, around]) == named for named in granted.paths)
+        if around not in stages and os.path.isdir(around) and not held:
+            stages[around] = tempfile.mkdtemp(prefix=".los-new-", dir=around)
+
+
+def _keep(granted, stages):
+    """Move what the command created into place. Returns a sentence for anything that could not be kept."""
+    lost = []
+    for path in granted.creates:
+        made = os.path.join(stages.get(os.path.dirname(path), ""), os.path.basename(path))
+        if os.path.dirname(path) in stages and os.path.lexists(made):
+            if os.path.lexists(path):
+                lost.append(f"{path} appeared while the command ran, so what it made was not kept.")
+            else:
+                os.rename(made, path)
+    return lost
+
+
+def _converse(command, granted, stages, in_the_open):
+    """Start the process, hand it the command and answer what it asks until it says how it ended."""
     start = {"runner": (INSIDE / "runner.py").read_text(), "api": (INSIDE / "api.py").read_text(),
              "code": command.source.read_text(), "file": f"{command.source.parent.name}/commands.py",
              "verb": command.verb, "args": granted.args, "data": granted.data or None}
     ours, theirs = socket.socketpair()
     with ours, tempfile.TemporaryFile() as noise:    # noise: whatever the process writes outside the socket
         with theirs:
-            line = [sys.executable] if in_the_open else _bubblewrap(granted) + [PYTHON]
+            line = [sys.executable] if in_the_open else _bubblewrap(granted, stages) + [PYTHON]
             process = subprocess.Popen(line + ["-I", "-X", "utf8", "-c", BOOT, str(theirs.fileno())],
                                        pass_fds=[theirs.fileno()], stdin=subprocess.DEVNULL, stdout=noise,
                                        stderr=noise, cwd="/", env=ENVIRONMENT)
@@ -127,6 +195,10 @@ def run(command, args):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            try:
+                channel.close()
+            except OSError:                 # something was still unsent to a process that is gone
+                pass
         noise.seek(0)
         said = noise.read().decode(errors="replace").strip()
     if isinstance(end, dict) and "returned" in end:
@@ -145,15 +217,18 @@ def _send(channel, message):
     channel.flush()
 
 
-def _bubblewrap(granted):
+def _bubblewrap(granted, stages=None):
     """The bubblewrap command line that builds the sandbox for one grant. Everything is bound at
-    its own absolute path, so a path means the same inside as outside."""
-    def bind(path, writable):
-        return ["--bind" if writable else "--ro-bind", path, path]
+    its own absolute path, so a path means the same inside as outside. The one exception is a
+    scratch folder, which stands where the folder around a path to create is."""
+    def bind(path, held):
+        source, writable = held
+        return ["--bind" if writable else "--ro-bind", source, path]
 
-    binds = {path: writable for path, writable in granted.paths.items() if os.path.exists(path)}
+    binds = {path: (path, writable) for path, writable in granted.paths.items() if os.path.exists(path)}
     if granted.data:
-        binds[granted.data] = granted.data_writable
+        binds[granted.data] = (granted.data, granted.data_writable)
+    binds.update({around: (scratch, True) for around, scratch in (stages or {}).items()})
     line = [shutil.which("bwrap"), "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--chdir", "/"]
     for name, value in ENVIRONMENT.items():
         line += ["--setenv", name, value]
@@ -207,6 +282,63 @@ def _answer(command, granted, message):
     return reply
 
 
+def _fetch(command, granted, asked):
+    """Get a page for a command, from a host its manifest lists and no other, over https."""
+    url = asked.get("url", "")
+    if granted.offline:
+        raise Refused(OFFLINE)
+    _listed(command, granted, url)
+    try:
+        with urllib.request.build_opener(_Listed(command, granted)).open(
+                urllib.request.Request(url, headers={"User-Agent": "lo-s"}), timeout=20) as response:
+            page = response.read(LARGEST + 1)
+    except urllib.error.HTTPError as error:
+        raise Refused(f"{urllib.parse.urlsplit(url).hostname} answered {error.code} {error.reason}")
+    except (urllib.error.URLError, OSError) as error:
+        raise Refused(f"{urllib.parse.urlsplit(url).hostname} could not be reached ({getattr(error, 'reason', error)})")
+    if len(page) > LARGEST:
+        raise Refused(f"the page at {url} is larger than {LARGEST // 1_000_000} MB")
+    return page.decode("utf-8", errors="replace")
+
+
+def _listed(command, granted, url):
+    parts = urllib.parse.urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if parts.scheme != "https" or parts.hostname not in granted.hosts or port not in (None, 443):
+        raise Refused(f"{command.name} may fetch over https from {', '.join(granted.hosts) or 'no host at all'}, "
+                      f"and {url or 'an empty address'} is not that")
+
+
+class _Listed(urllib.request.HTTPRedirectHandler):
+    """Holds a page that sends the request on elsewhere to the same list of hosts."""
+
+    def __init__(self, command, granted):
+        self.command, self.granted = command, granted
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        _listed(self.command, self.granted, newurl)
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+
+def _remove(command, granted, asked):
+    """Remove a path the user named for writing, with everything in it."""
+    if command.effect != "destructive":
+        raise Refused(f"{command.name} is not marked destructive, so it may not remove anything")
+    path = _changeable(granted, asked.get("path"))
+    if not os.path.lexists(path):
+        raise Refused(f"{path} does not exist")
+    try:
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    except OSError as error:
+        raise Refused(f"{path} could not be removed: {error}")
+
+
 def _move(command, granted, asked):
     """Move one path to another, both of them named by the user. Nothing is ever replaced."""
     if command.effect != "destructive":
@@ -238,4 +370,4 @@ def _changeable(granted, path):
     raise Refused(f"{path} is not among the paths this command was given to change")
 
 
-CALLS = {"move": _move}
+CALLS = {"move": _move, "remove": _remove, "fetch": _fetch}

@@ -3,7 +3,10 @@
 `probe` has one command per effect. Each evaluates the Python it is given and returns the value,
 or the name of the error it ran into, so a test can try something and see how it went.
 """
+import io
 import os
+import urllib.error
+import urllib.request
 from unittest import mock
 
 from los import plugins, sandbox, state
@@ -36,6 +39,20 @@ path = {{ path = "write" }}
 also = {{ path = "write" }}
 {TOLD}
 
+[commands.add]
+description = "Try something as a command that may create what it is given"
+effect = "write"
+[commands.add.params]
+path = {{ path = "create" }}
+also = {{ path = "read" }}
+{TOLD}
+
+[commands.net]
+description = "Try something as a command that may fetch from one host"
+hosts = ["api.example.org"]
+[commands.net.params]
+code = "what to try"
+
 [commands.fail]
 description = "End in the way it is told to"
 [commands.fail.params]
@@ -43,7 +60,7 @@ how = "refuse, raise, vanish or print"
 '''
 CODE = '''
 import os, pathlib, shutil, socket
-from los import DATA, CommandError, move
+from los import DATA, CommandError, fetch, move, remove
 
 
 def _attempt(code, path, other, also=None):
@@ -65,6 +82,14 @@ def do_write(path=None, other=None, code=None):
 
 def do_change(path=None, other=None, code=None, also=None):
     return _attempt(code, path, other, also)
+
+
+def do_add(path=None, other=None, code=None, also=None):
+    return _attempt(code, path, other, also)
+
+
+def do_net(code=None):
+    return _attempt(code, None, None)
 
 
 def do_fail(how=None):
@@ -106,6 +131,25 @@ class GrantTest(Folders):
     def test_the_hosts_proc_is_never_handed_over(self):
         granted = sandbox.grant(self.table["fs.list"], {"path": "/proc/1"})
         self.assertEqual((granted.paths, granted.proc), ({}, True))
+
+    def test_a_default_can_be_built_from_another_parameter(self):
+        copy = plugins.Command("fs.copy", "Copy", {"source": plugins.Param("", "read"),
+                                                   "dest": plugins.Param("", "create", "{source}.bak")}, "write")
+        self.assertEqual(sandbox.complete(copy, {"source": "config.yaml"}, base="/work"),
+                         {"source": "/work/config.yaml", "dest": "/work/config.yaml.bak"})
+        self.assertEqual(sandbox.complete(copy, {"source": "~/config.yaml", "dest": "kept"}, base="/work"),
+                         {"source": os.path.expanduser("~/config.yaml"), "dest": "/work/kept"})
+        self.assertEqual(sandbox.complete(copy, {}), {})
+
+    def test_a_path_to_create_is_one_where_nothing_is_yet(self):
+        copy = plugins.Command("fs.copy", "Copy", {"source": plugins.Param("", "read"),
+                                                   "dest": plugins.Param("", "create", "{source}.bak")}, "write")
+        (self.files / "config.yaml").write_text("a: 1\n")
+        granted = sandbox.grant(copy, {"source": "config.yaml"}, base=str(self.files))
+        self.assertEqual((granted.paths, granted.creates),
+                         ({f"{self.files}/config.yaml": False}, [f"{self.files}/config.yaml.bak"]))
+        granted = sandbox.grant(copy, {"source": "config.yaml", "dest": "config.yaml"}, base=str(self.files))
+        self.assertEqual((granted.paths, granted.creates), ({f"{self.files}/config.yaml": False}, []))
 
 
 @needs_sandbox
@@ -246,6 +290,107 @@ class SandboxTest(Folders):
             self.assertEqual(sorted(path.name for path in outside.iterdir()), ["theirs.txt"], code)
             self.assertEqual(sorted(path.name for path in (self.files / "folder").iterdir()), ["inside.txt", "way-out"], code)
         self.assertTrue(all(call["outcome"] != "done" for call in state.read("calls")))
+
+    def test_a_command_makes_what_it_was_given_to_create(self):
+        new = self.files / "new.txt"
+        self.assertEqual(self.attempt("add", "(os.listdir(os.path.dirname(path)), open(path, 'w').write('made'))",
+                                      path=new, also=str(self.given)), "(['given.txt'], 4)")
+        self.assertEqual(new.read_text(), "made")
+        tree = self.files / "tree"
+        self.attempt("add", "(os.mkdir(path), open(path + '/leaf.txt', 'w').write('leaf'))", path=tree)
+        self.assertEqual((tree / "leaf.txt").read_text(), "leaf")
+        self.assertEqual(sorted(path.name for path in self.files.iterdir()),
+                         ["folder", "given.txt", "new.txt", "secret.txt", "tree"])       # and no scratch folder is left
+
+    def test_nothing_appears_when_the_command_does_not_end_well(self):
+        new = self.files / "new.txt"
+        for code in ("(open(path, 'w').write('made'), move(path, path + '2'))",     # refused by the core, so it fails
+                     "(open(path, 'w').write('made'), os._exit(1))"):
+            result = sandbox.run(self.table["probe.add"], {"path": str(new), "code": code})
+            self.assertFalse(result.ok, code)
+            self.assertTrue(self.unchanged(), code)
+
+    def test_what_a_command_makes_beside_the_path_it_was_given_is_thrown_away(self):
+        new = self.files / "new.txt"
+        self.attempt("add", "[open(os.path.dirname(path) + '/' + name, 'w').write('x') for name in ('new.txt', 'stray.txt', "
+                            "'secret.txt')]", path=new)
+        self.assertEqual(sorted(path.name for path in self.files.iterdir()), ["folder", "given.txt", "new.txt", "secret.txt"])
+        self.assertEqual((new.read_text(), self.secret.read_text()), ("x", "secret\n"))
+
+    def test_a_path_to_create_that_is_there_already_can_be_seen_and_not_changed(self):
+        self.assertEqual(self.attempt("add", "open(path).read()"), "'given\\n'")
+        for code in ("open(path, 'w').write('other')", "os.remove(path)", "remove(path)"):
+            self.attempt("add", code)
+            self.assertTrue(self.unchanged(), code)
+
+    def test_nothing_can_be_made_where_the_user_may_not_write(self):
+        result = sandbox.run(self.table["probe.add"], {"path": "/usr/los-test-new.txt", "code": "open(path, 'w').write('x')"})
+        self.assertEqual((result.ok, result.broke), (False, False))
+        self.assertIn("Permission denied", result.text)
+
+    def test_the_core_removes_a_named_path_for_a_destructive_command(self):
+        self.assertEqual(self.attempt("change", "remove(path)"), "None")
+        self.assertFalse(self.given.exists())
+        self.assertEqual(self.attempt("change", "remove(also)", path=self.secret, also=str(self.files / "folder")), "None")
+        self.assertEqual(sorted(path.name for path in self.files.iterdir()), ["secret.txt"])
+        self.assertEqual([(call["call"], call["path"], call["outcome"]) for call in state.read("calls")],
+                         [("remove", str(self.given), "done"), ("remove", str(self.files / "folder"), "done")])
+
+    def test_the_core_removes_nothing_the_user_did_not_name(self):
+        for verb, code in (("change", "remove(other)"), ("change", "remove(os.path.dirname(path))"),
+                           ("change", "remove(path + '/../secret.txt')"), ("read", "remove(path)"), ("write", "remove(path)")):
+            result = sandbox.run(self.table[f"probe.{verb}"], {"path": str(self.given), "code": code, "other": str(self.secret)})
+            self.assertEqual((result.ok, result.broke), (False, False), code)
+            self.assertTrue(self.unchanged(), code)
+
+    def page(self, code, **how):
+        return sandbox.run(self.table["probe.net"], {"code": code}, **how)
+
+    def test_a_page_is_fetched_from_a_listed_host_by_the_core(self):
+        class Page(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+        with mock.patch.object(urllib.request.OpenerDirector, "open", return_value=Page("météo: 12 °C".encode())) as opened:
+            result = self.page("fetch('https://api.example.org/v1/forecast?day=tomorrow')")
+        self.assertEqual((result.ok, result.text), (True, repr("météo: 12 °C")))
+        self.assertEqual(opened.call_args.args[0].full_url, "https://api.example.org/v1/forecast?day=tomorrow")
+        call, = state.read("calls")
+        self.assertEqual((call["call"], call["url"], call["outcome"]),
+                         ("fetch", "https://api.example.org/v1/forecast?day=tomorrow", "done"))
+
+    def test_nothing_is_fetched_from_anywhere_else(self):
+        with mock.patch.object(urllib.request.OpenerDirector, "open") as opened:
+            for url in ("https://example.org/", "http://api.example.org/", "https://api.example.org:8443/",
+                        "https://api.example.org@example.net/", "https://api.example.org.example.net/", "ftp://api.example.org/",
+                        "file:///etc/passwd", ""):
+                result = self.page(f"fetch({url!r})")
+                self.assertEqual((result.ok, result.broke), (False, False), url)
+                self.assertIn("probe.net may fetch over https from api.example.org", result.text)
+            result = sandbox.run(self.table["probe.read"], {"path": str(self.given), "code": "fetch('https://api.example.org/')"})
+            self.assertIn("from no host at all", result.text)
+            self.assertIn(sandbox.OFFLINE, self.page("fetch('https://api.example.org/')", offline=True).text)
+        opened.assert_not_called()
+        granted = sandbox.grant(self.table["probe.net"], {})
+        with self.assertRaises(sandbox.Refused):        # a listed host that sends the request on elsewhere
+            sandbox._Listed(self.table["probe.net"], granted).redirect_request(None, None, 302, "", {}, "https://example.net/")
+
+    def test_a_host_that_cannot_be_reached_is_an_error_the_user_can_read(self):
+        with mock.patch.object(urllib.request.OpenerDirector, "open", side_effect=urllib.error.URLError("no route")):
+            result = self.page("fetch('https://api.example.org/')")
+        self.assertEqual((result.ok, result.text), (False, "api.example.org could not be reached (no route)"))
+
+    def test_a_trial_run_stays_away_from_the_users_things(self):
+        elsewhere = self.root / "trial"
+        (elsewhere / "work").mkdir(parents=True)
+        (elsewhere / "work" / "given.txt").write_text("trial\n")
+        result = sandbox.run(self.table["probe.write"], {"path": "given.txt", "code": "(open(path).read(), open(DATA + '/x', 'w').write('x'))"},
+                             base=str(elsewhere / "work"), data=str(elsewhere))
+        self.assertEqual(result.text, "('trial\\n', 1)")
+        self.assertEqual(((elsewhere / "x").read_text(), list(state.data("probe").iterdir())), ("x", []))
 
     def test_how_a_command_ends_is_told_apart(self):
         def end(how):

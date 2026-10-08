@@ -23,7 +23,8 @@ class StudentTest(ShellCase):
     def test_anything_that_changes_something_needs_an_explicit_yes(self):
         self.shell(call("note.add", text="milk"), answers=[""]).handle("jot down milk")
         self.assertEqual((self.ran.calls, self.asked), ([], ["Run it? [y/N] "]))
-        self.assertEqual(self.shown[-1], "Not run. If that was the wrong command for what you typed, say wrong.")
+        self.assertEqual(self.shown[-1], "Not run. If that was the wrong command for what you typed, say wrong, "
+                                         "or say the right one with means.")
         self.shell(call("fs.move", source="a", dest="b"), answers=["y"]).handle("rename a to b")
         self.assertEqual(self.asked, ["It makes changes that cannot be undone. Run it? [y/N] "])
         self.assertEqual(self.ran.calls, [("fs.move", {"source": "a", "dest": "b"})])
@@ -81,7 +82,6 @@ class MemoryTest(ShellCase):
         self.assertEqual(self.ran.calls, [("fs.list", {"path": "~"})] * 2)
         self.assertEqual(self.shown[-2], "→ fs.list --path ~  (remembered)")
         self.assertEqual([(by, verdict) for *_, by, verdict in recorded()], [("student", "accepted"), ("memory", "accepted")])
-        self.assertEqual(state.read("cases")[1]["saved"], 1.5)
 
     def test_a_remembered_line_that_changes_something_still_asks(self):
         shell = self.shell(call("note.add", text="milk"), answers=["y", "y", ""])
@@ -123,8 +123,9 @@ class MemoryTest(ShellCase):
         shell.handle("show the big files")
         shell.handle("wrong")
         self.assertEqual(self.shown[-1], 'Taken back: "show the big files" does not mean fs.list, and is not '
-                                         'remembered that way.')
-        self.assertEqual(self.asked[-1], "Queue it as a need for a new command? [y/N] ")
+                                         'remembered that way.\nIf a command does fit, say which: means COMMAND '
+                                         '--parameter value.')
+        self.assertEqual(self.asked[-1], "Or queue it as a need for a new command? [y/N] ")
         self.assertEqual(cases.waiting(), {})
         shell.handle("show the big files")
         self.assertEqual(self.student.calls, 2)                     # asked again
@@ -149,6 +150,29 @@ class MemoryTest(ShellCase):
         shell.handle("keep x")
         self.assertEqual((self.student.calls, self.shown[-2]), (2, "→ note.add --text x  (remembered)"))
 
+    def test_an_answer_taken_back_is_doubted_when_the_student_gives_it_again(self):
+        shell = self.shell(*[call("fs.list", path="home")] * 3, answers=["n", "", "", "y"])
+        shell.handle("what is in my home folder")
+        shell.handle("wrong")
+        shell.handle("what is in my home folder")
+        self.assertEqual(self.shown[-2:], ["→ fs.list --path home  (you said this was wrong)",
+                                           "Not run. If a command does fit, say which: means COMMAND --parameter value."])
+        self.assertEqual((self.asked[-1], self.ran.calls), ("Run it? [y/N] ", []))     # Enter no longer runs it
+        shell.handle("what is in my home folder")                                      # yes still does, and settles it
+        self.assertEqual(self.ran.calls, [("fs.list", {"path": "home"})])
+        shell.handle("what is in my home folder")
+        self.assertEqual((self.student.calls, self.shown[-2]), (3, "→ fs.list --path home  (remembered)"))
+
+    def test_only_the_answer_taken_back_is_doubted(self):
+        shell = self.shell(call("fs.list", path="home"), call("fs.list", path="~"), call("fs.list", path="home"),
+                           answers=["n", "", "n", "n"])
+        shell.handle("what is in my home folder")
+        shell.handle("wrong")
+        shell.handle("what is in my home folder")           # another value: not what was taken back
+        self.assertEqual((self.shown[-2], self.asked[-1]), ("→ fs.list --path ~", "Run it? [Y/n] "))
+        shell.handle("what do I keep at home")              # another line: nothing is known about it
+        self.assertEqual((self.shown[-2], self.asked[-1]), ("→ fs.list --path home", "Run it? [Y/n] "))
+
     def test_stats_count_what_each_source_answered(self):
         shell = self.shell(call("fs.list"), NONE, call("note.add", text="x"), answers=["", "", "n"])
         for line in ("list it", "list it", "list it", "order a pizza", "keep x", "wrong"):
@@ -158,8 +182,25 @@ class MemoryTest(ShellCase):
                                          "Answered from memory: 2, saving about 3.0 s of model time\n"
                                          "Answered by the student: 3, taking 4.5 s "
                                          "(1 accepted, 1 declined, 1 where nothing fitted)\n"
+                                         "Settled by you with means: 0\n"
                                          "Taken back with wrong: 1\n"
+                                         "Calls to the teacher: 0\n"
                                          "Needs waiting: 1")
+
+    def test_what_memory_saved_is_counted_at_the_usual_time_for_a_line(self):
+        shell = self.shell(answers=["", "", ""])
+        shell.student.complete = lambda *_: (call("fs.list", path=str(len(state.read("cases")))),
+                                             {"seconds": 9.0 if not state.read("cases") else 1.0})
+        for line in ("first after the table changed", "second", "third", "first after the table changed"):
+            shell.handle(line)
+        shell.handle("stats")
+        self.assertIn("Answered from memory: 1, saving about 1.0 s of model time", self.shown[-1])
+
+    def test_wrong_says_what_was_taken_back_in_full(self):
+        shell = self.shell(call("fs.list", path="home"), answers=["n", ""])
+        shell.handle("what is in my home folder")
+        shell.handle("wrong")
+        self.assertIn('does not mean fs.list --path home, and', self.shown[-1])
 
 
 class FullFormTest(ShellCase):
@@ -191,3 +232,47 @@ class FullFormTest(ShellCase):
         os.chdir(self.root / "elsewhere")
         shell.handle("what is in docs")
         self.assertEqual(self.shown[-2], f"→ fs.list --path {self.root}/elsewhere/docs  (remembered)")
+
+
+class MeansTest(ShellCase):
+    """The user says what a line means, and that settles it."""
+
+    def test_the_user_can_say_what_a_line_means(self):
+        shell = self.shell(call("fs.list", path="home"), answers=["n"])
+        shell.handle("what is in my home folder")
+        shell.handle("means fs.list --path ~ --sort-by size")
+        self.assertEqual(self.shown[-2:], ['Remembered: "what is in my home folder" means fs.list --path ~ --sort-by size.',
+                                           "ran fs.list"])
+        self.assertEqual(self.ran.calls, [("fs.list", {"path": "~", "sort_by": "size"})])
+        self.assertEqual(recorded()[-1], ("what is in my home folder", "fs.list", "user", "accepted"))
+        shell.handle("what is in my home folder")
+        self.assertEqual((self.student.calls, self.shown[-2]), (1, "→ fs.list --path ~ --sort-by size  (remembered)"))
+        shell.handle("stats")
+        self.assertIn("Settled by you with means: 1", self.shown[-1])
+
+    def test_a_line_nothing_fitted_can_be_settled_and_leaves_the_queue(self):
+        shell = self.shell(NONE, answers=["y"])
+        shell.handle("put that somewhere else")
+        shell.handle("means fs.move --source a --dest b")
+        self.assertEqual(self.shown[-3], "That answers need 1, so it left the queue.")
+        self.assertEqual(self.asked, ["It makes changes that cannot be undone. Run it? [y/N] "])
+        self.assertEqual((cases.waiting(), self.ran.calls), ({}, [("fs.move", {"source": "a", "dest": "b"})]))
+
+    def test_wrong_can_take_back_what_the_user_said_too(self):
+        shell = self.shell(NONE, call("note.add", text="x"), answers=["", "n"])
+        shell.handle("keep x")
+        shell.handle("means fs.list")
+        shell.handle("wrong")
+        shell.handle("keep x")
+        self.assertEqual(self.student.calls, 2)
+
+    def test_means_needs_a_line_and_a_command(self):
+        shell = self.shell(NONE)
+        shell.handle("means fs.list")
+        self.assertIn("There is no plain-language line to settle yet", self.shown[-1])
+        shell.handle("order a pizza")
+        for wrong_use, said in (("means", "Usage: means COMMAND"), ("means the pizza place", "Usage: means COMMAND"),
+                                ("means fs.list --colour red", "fs.list has no parameter --colour\nUsage: means fs.list")):
+            shell.handle(wrong_use)
+            self.assertIn(said, self.shown[-1])
+        self.assertEqual((self.ran.calls, len(state.read("cases"))), ([], 1))
