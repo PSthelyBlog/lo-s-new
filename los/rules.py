@@ -11,7 +11,9 @@ including cases the teacher was never shown. A rule may leave a held-back case t
 returning None, which is always safe. It may never contradict one.
 
 An answer on record for an exact value is used before the rule is asked, so a rule only ever
-decides values that were not seen before, and an answer the user sets later comes first.
+decides values that were not seen before, and an answer the user sets later comes first. So does
+one they set for a whole stretch of values: where the user has said where a line is, the rule is
+not asked.
 
 A command's own runs may never show where the line is: a machine that stays cool only ever has
 "fine" on record. When the manifest says between which numbers a value lies, the student can be
@@ -23,11 +25,11 @@ import json
 import re
 
 from . import cases, sandbox, state
+from .cases import varying
 from .models import complete_valid
 from .parse import count
 
 MINIMUM = 6     # different values on record before a rule is attempted
-NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 COARSE, FINER = 9, 8    # values asked evenly over a range, and then at most this many more where the answer changes
 
 BRIEF = """\
@@ -73,20 +75,36 @@ def _natural(text):
 def answers(command, name):
     """What is on record for one judgement: (the question, the allowed answers, one (value, answer,
     who gave it) per value, in the order of the values), or nothing when no answer is on record.
-    The answer for a value is the one the user set if they set one, otherwise what the student
-    said. Only cases asked the way the command asks now count: under another question they
-    would be answers to something else."""
+    The answer for a value is the one the user set, for that value or for a stretch it lies in,
+    and otherwise what the student said. Only cases asked the way the command asks now count:
+    under another question they would be answers to something else.
+
+    Where the user set a stretch, the value it starts at is listed, and the value next to it on
+    the other side when the user settled that one too. Those two are what shows a rule exactly
+    where the answer changes."""
     asked = [case for case in cases.judgements(command, name) if case["by"] in ("user", "student")]
     if not asked:
         return None
-    question, choices = asked[-1]["question"]["ask"], asked[-1]["question"]["choices"]
+    same = {key: asked[-1]["question"][key] for key in ("command", "name", "ask", "choices")}
+    values = [case["question"]["value"] for case in asked
+              if not case.get("reach") and cases.same_question(same, case["question"])]
+    for stretch in cases.stretches(same, asked):
+        values += [stretch["question"]["value"], beside(stretch)]
     found = {}
-    for case in asked:
-        value = case["question"]["value"]
-        if (case["question"]["ask"], case["question"]["choices"]) == (question, choices) \
-                and (case["by"] == "user" or value not in found or found[value][2] != "user"):
-            found[value] = (value, case["answer"], case["by"])
-    return question, choices, sorted(found.values(), key=lambda one: _natural(one[0]))
+    for value in values:
+        known = cases.judged({**same, "value": value}, asked)
+        if known:
+            found[value] = (value, known["answer"], known["by"])
+    return same["ask"], same["choices"], sorted(found.values(), key=lambda one: _natural(one[0]))
+
+
+def beside(stretch):
+    """The value next to the one a stretch starts at, on the side it does not reach: one step of
+    the last digit it was written with."""
+    before, number, after = varying(stretch["question"]["value"])
+    places = len(number.partition(".")[2])
+    step = 10 ** -places if stretch["reach"] == "up to" else -10 ** -places
+    return f"{before}{float(number) + step:.{places}f}{after}"
 
 
 def recorded(command, name):
@@ -120,13 +138,6 @@ def summary(listed):
             lines.append(f"  {stretch(listed[start][0], listed[index - 1][0])}: {listed[start][1]}")
             start = index
     return lines
-
-
-def varying(value):
-    """A value split around its first number, as (the text before, the number, the text after),
-    or nothing when it holds no number."""
-    found = NUMBER.search(value)
-    return (value[:found.start()], found.group(), value[found.end():]) if found else None
 
 
 def spread(ask, example, answered, low, high):

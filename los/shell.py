@@ -22,9 +22,9 @@ terminal they can say it at the question itself: answering e puts the chosen com
 input line to correct.
 
 A command may ask for a judgement while it runs. `trace` shows the judgements of the latest run
-and where each answer came from, and lets the user set one. `rule` has the teacher turn the
-answers on record for one judgement into code. `improve` lists what the records show could be
-better, and what to type for each.
+and where each answer came from, and lets the user set one, or one for a whole stretch of
+values. `rule` has the teacher turn the answers on record for one judgement into code. `improve`
+lists what the records show could be better, and what to type for each.
 """
 import argparse
 import datetime
@@ -55,7 +55,8 @@ BUILTINS = {
     "trace": "trace shows the judgements the latest command asked for, and where each answer came from: what is on "
              "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on. "
              "trace COMMAND NAME shows every answer on record for one judgement, and trace COMMAND NAME VALUE is "
-             "ANSWER sets the answer for any value.",
+             "ANSWER sets the answer for any value. With from VALUE or up to VALUE in place of VALUE, the answer "
+             "holds for that value and every one above it or below it, which says where a line is in one go.",
     "rule": "rule COMMAND NAME asks the teacher to turn the answers on record for one judgement into a small "
             "function. It is tried on every one of them, and you see it before it is used. From then on that "
             "judgement asks the rule before the student. When too little is on record, it first offers to put "
@@ -76,6 +77,12 @@ CARE = {
 UNDONE = "It makes changes that cannot be undone. "
 FITS = "If a command does fit, say which: means COMMAND --parameter value."
 EXAMPLE = state.ROOT / "plugins" / "fs"     # the plugin the teacher is shown as an example of the style
+
+
+def several(things, most=6):
+    """A list in a sentence: a, b and c, with the count of the rest when there are many."""
+    things = things if len(things) <= most else things[:most - 1] + [f"{len(things) - most + 1} more"]
+    return ", ".join(things[:-1]) + (" and " if len(things) > 1 else "") + things[-1]
 
 
 class Shell:
@@ -585,7 +592,8 @@ class Shell:
         return f": {', '.join(known)}." if known else ". No command here asks for one."
 
     def on_record(self, words):
-        """Show every answer on record for one judgement, or set the answer for one value."""
+        """Show every answer on record for one judgement, or set the answer for one value, or for
+        a value and every one above or below it."""
         command = self.table[words[0]]
         if len(words) < 2 or words[1] not in command.judges:
             self.out("Usage: trace COMMAND NAME, for a judgement a command asks for" + self.judged_here())
@@ -595,25 +603,48 @@ class Shell:
             self.out(f"Nothing is on record for {name} in {command.name} yet. It asks when it runs.")
             return
         question, choices, listed = found
+        asked = {"command": command.name, "name": name, "ask": question, "choices": choices}
         if len(words) == 2:
             mine = sum(who == "user" for _, _, who in listed)
             other = next(choice for choice in choices if choice != listed[0][1])
+            drawn = [f"{case['reach']} {case['question']['value']} is {case['answer']}" for case in cases.stretches(asked)]
             self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}" +
                      (f", {mine} of them set by you" if mine else "") + ":\n" + "\n".join(rules.summary(listed)) +
+                     (f"\nYou set: {'; '.join(drawn)}." if drawn else "") +
                      f"\nTo set one yourself: trace {command.name} {name} VALUE is ANSWER, such as "
-                     f"trace {command.name} {name} {listed[0][0]} is {other}.")
+                     f"trace {command.name} {name} {listed[0][0]} is {other}. With from VALUE or up to VALUE, the "
+                     "answer also holds for every value above it or below it.")
             return
-        value, _, answer = " ".join(words[2:]).rpartition(" is ")
+        rest = words[2:]
+        reach = "from" if rest[:1] == ["from"] else "up to" if rest[:2] == ["up", "to"] else ""
+        value, _, answer = " ".join(rest[len(reach.split()):]).rpartition(" is ")
         if not value or answer not in choices:
-            self.out(f"Usage: trace {command.name} {name} VALUE is ANSWER, with one of its answers: {' or '.join(choices)}.")
+            self.out(f"Usage: trace {command.name} {name} VALUE is ANSWER, with one of its answers: {' or '.join(choices)}. "
+                     "from VALUE or up to VALUE sets every value above it or below it as well.")
             return
-        cases.record("judgement", {"command": command.name, "name": name, "ask": question, "choices": choices,
-                                   "value": value}, answer, "user", "accepted")
+        if reach and not rules.varying(value):
+            self.out(f"{reach} goes by the number in a value, and \"{value}\" has none.")
+            return
+        cases.record("judgement", {**asked, "value": value}, answer, "user", "accepted", **({"reach": reach} if reach else {}))
         shape = lambda text: (rules.varying(text) or (text, "", ""))[::2]      # the text around its first number
-        self.out(f"Set: {command.name} takes {name} of {value} as {answer} from now on." +
-                 ("" if any(shape(known) == shape(value) for known, _, _ in listed) else
-                  f"\nThe values on record look like {listed[0][0]}. One written another way will not come up when "
-                  f"{command.name} runs."))
+        told = f"Set: {command.name} takes {name} of {value}" + (
+            f" and every value {'above' if reach == 'from' else 'below'} it" if reach else "") + f" as {answer} from now on."
+        if reach:
+            # A stretch changes answers that are on record already. Say which, and what it leaves alone.
+            record, this = cases.judgements(command.name, name), {"question": {"value": value}, "reach": reach}
+            now = {known: said for known, said, _ in rules.answers(command.name, name)[2]}
+            changed = [known for known, said, _ in listed if now[known] != said]
+            kept = [f"{known} is {said}" for known, said, who in listed
+                    if who == "user" and said != answer and cases.within(known, [this])
+                    and not cases.judged({**asked, "value": known}, record).get("reach")]
+            if changed:
+                told += (f"\n{count(len(changed), 'answer')} on record {'changes' if len(changed) == 1 else 'change'} "
+                         f"with it: {several(changed)}.")
+            if kept:
+                told += f"\nWhat you set for a single value stays as it is: {several(kept)}."
+        self.out(told + ("" if any(shape(known) == shape(value) for known, _, _ in listed) else
+                         f"\nThe values on record look like {listed[0][0]}. One written another way will not come up when "
+                         f"{command.name} runs."))
 
     def spread(self, command, name, reason):
         """Too little is on record for a rule. When the manifest says between which numbers the

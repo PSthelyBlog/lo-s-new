@@ -28,6 +28,10 @@ class Case(Folders):
     def judge(self, minds, value, run="run 1", question=QUESTION, name="temperature"):
         return minds.judge(HEALTH, run, name, question, value, LEVELS)
 
+    def stretch(self, reach, value, answer, question=QUESTION):
+        cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": question, "choices": LEVELS,
+                                   "value": value}, answer, "user", "accepted", reach=reach)
+
 
 class JudgementTest(Case):
     def test_the_student_is_asked_with_the_question_first_and_the_value_alone_last(self):
@@ -56,6 +60,42 @@ class JudgementTest(Case):
         cases.record("judgement", cases.judgements()[0]["question"], "worrying", "user", "accepted")
         self.assertEqual(self.judge(minds, "80 °C"), "worrying")
         self.assertEqual((self.student.calls, cases.judgements()[-1]["source"]), (1, "user"))
+
+    def test_an_answer_the_user_set_for_a_stretch_holds_for_every_value_in_it(self):
+        minds = self.minds(FINE, FINE)
+        self.stretch("from", "85 °C", "worrying")
+        self.assertEqual([self.judge(minds, value) for value in ("85 °C", "99.5 °C", "84 °C", "90 degrees")],
+                         ["worrying", "worrying", "fine", "fine"])
+        self.assertEqual(self.student.calls, 2)         # for the one below it, and the one written another way
+        self.assertEqual([(case["by"], case.get("source")) for case in cases.judgements()[1:3]], [("memory", "user")] * 2)
+        self.stretch("up to", "30 °C", "worrying")
+        self.assertEqual([self.judge(minds, value) for value in ("30 °C", "-5 °C")], ["worrying", "worrying"])
+        self.assertEqual(self.student.calls, 2)
+        self.stretch("from", "85 °C", "fine", question="Is this fine for a server room?")    # another question's stretch
+        self.assertEqual(self.judge(minds, "86 °C"), "worrying")
+
+    def test_a_stretch_comes_after_the_users_answer_for_one_value_and_before_the_students(self):
+        minds = self.minds(FINE, FINE)
+        self.assertEqual([self.judge(minds, value) for value in ("90 °C", "95 °C")], ["fine", "fine"])
+        cases.record("judgement", cases.judgements()[1]["question"], "fine", "user", "accepted")    # 95 °C, by the user
+        self.stretch("from", "85 °C", "worrying")
+        self.assertEqual([self.judge(minds, value) for value in ("90 °C", "95 °C")], ["worrying", "fine"])
+        self.assertEqual(self.student.calls, 2)
+        self.assertEqual(minds.sample(HEALTH, "temperature", QUESTION, "88 °C", LEVELS), "worrying")
+        self.assertEqual(self.student.calls, 2)         # a value asked about on purpose is not put to the student either
+
+    def test_a_stretch_reaches_to_the_next_one_and_where_two_meet_the_last_said_holds(self):
+        minds = self.minds()
+        self.stretch("from", "80 °C", "fine")           # the further one is set last, and the nearer one still holds
+        self.stretch("from", "60 °C", "worrying")
+        self.assertEqual([self.judge(minds, value) for value in ("70 °C", "90 °C")], ["worrying", "fine"])
+        self.stretch("up to", "75 °C", "fine")          # it meets the one from 60 °C, and was said last
+        self.assertEqual([self.judge(minds, value) for value in ("65 °C", "50 °C", "78 °C")], ["fine", "fine", "worrying"])
+        self.stretch("from", "60 °C", "worrying")       # said again, so it is the last now
+        self.assertEqual([self.judge(minds, value) for value in ("65 °C", "50 °C")], ["worrying", "fine"])
+        self.stretch("from", "80 °C", "worrying")       # one set again at the same value takes the other's place
+        self.assertEqual(self.judge(minds, "90 °C"), "worrying")
+        self.assertEqual(self.student.calls, 0)
 
     def test_the_record_holds_for_one_question_of_one_command_only(self):
         minds = self.minds(FINE, WORRYING, WORRYING)
@@ -270,6 +310,10 @@ class ThroughTheSandboxTest(Case):
         self.assertEqual(self.run_it("probe.ask", None), "no model can be asked here")
 
 
+USAGE = ("Usage: trace sys.health temperature VALUE is ANSWER, with one of its answers: fine or worrying. from VALUE or "
+         "up to VALUE sets every value above it or below it as well.")
+
+
 class TraceTest(Folders):
     def shell(self, answers=()):
         self.shown, replies = [], list(answers)
@@ -328,7 +372,9 @@ class TraceTest(Folders):
         shell.handle("trace sys.health temperature")
         self.assertEqual(self.shown[-1], "On record for temperature in sys.health, 5 answers:\n  40 to 80 °C: fine\n"
                                          "  90 to 100 °C: worrying\nTo set one yourself: trace sys.health temperature "
-                                         "VALUE is ANSWER, such as trace sys.health temperature 40 °C is worrying.")
+                                         "VALUE is ANSWER, such as trace sys.health temperature 40 °C is worrying. With "
+                                         "from VALUE or up to VALUE, the answer also holds for every value above it or "
+                                         "below it.")
         shell.handle("trace sys.health temperature 80 °C is worrying")
         self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 80 °C as worrying from now on.")
         shell.handle("trace sys.health temperature 70 °C is fine")      # a value nobody judged yet
@@ -343,8 +389,46 @@ class TraceTest(Folders):
         for wrong_use in ("trace sys.health temperature 80 °C", "trace sys.health temperature 80 °C is hot",
                           "trace sys.health temperature is fine"):
             shell.handle(wrong_use)
-            self.assertEqual(self.shown[-1], "Usage: trace sys.health temperature VALUE is ANSWER, with one of its answers: "
-                                             "fine or worrying.", wrong_use)
+            self.assertEqual(self.shown[-1], USAGE, wrong_use)
+
+    def test_one_line_sets_a_value_and_every_one_above_or_below_it(self):
+        shell = self.shell()
+        for degrees in (40, 60, 80, 90, 100):
+            self.judged("run 1", "temperature", f"{degrees} °C", "fine" if degrees < 95 else "worrying", "student")
+        shell.handle("trace sys.health temperature from 85 °C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 85 °C and every value above it as worrying "
+                                         "from now on.\n1 answer on record changes with it: 90 °C.")
+        shell.handle("trace sys.health temperature up to 84 °C is fine")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 84 °C and every value below it as fine "
+                                         "from now on.")
+        shell.handle("trace sys.health temperature")
+        self.assertTrue(self.shown[-1].startswith(
+            "On record for temperature in sys.health, 7 answers, 7 of them set by you:\n  40 to 84 °C: fine\n"
+            "  85 to 100 °C: worrying\nYou set: up to 84 °C is fine; from 85 °C is worrying.\nTo set one yourself: "))
+        self.assertEqual([cases.judged({**cases.judgements()[0]["question"], "value": value})["answer"]
+                          for value in ("12 °C", "84 °C", "85 °C", "300 °C")], ["fine", "fine", "worrying", "worrying"])
+
+    def test_a_stretch_says_what_it_changes_and_what_it_leaves_alone(self):
+        shell = self.shell()
+        for degrees in range(50, 100, 5):
+            self.judged("run 1", "temperature", f"{degrees} °C", "fine", "student")
+        shell.handle("trace sys.health temperature 90 °C is fine")
+        shell.handle("trace sys.health temperature from 60 °C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 60 °C and every value above it as worrying "
+                                         "from now on.\n7 answers on record change with it: 60 °C, 65 °C, 70 °C, 75 °C, "
+                                         "80 °C and 2 more.\nWhat you set for a single value stays as it is: 90 °C is fine.")
+        shell.handle("trace sys.health temperature from 60 °C is worrying")      # said twice, it changes nothing more
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 60 °C and every value above it as worrying "
+                                         "from now on.\nWhat you set for a single value stays as it is: 90 °C is fine.")
+        shell.handle("trace sys.health temperature from 60C is worrying")
+        self.assertTrue(self.shown[-1].endswith("\nThe values on record look like 50 °C. One written another way will not "
+                                                "come up when sys.health runs."))
+        shell.handle("trace sys.health temperature up to warm is fine")
+        self.assertEqual(self.shown[-1], 'up to goes by the number in a value, and "warm" has none.')
+        for wrong_use in ("trace sys.health temperature from 85 °C", "trace sys.health temperature up to 85 °C is hot",
+                          "trace sys.health temperature from is fine"):
+            shell.handle(wrong_use)
+            self.assertEqual(self.shown[-1], USAGE, wrong_use)
 
     def test_trace_says_how_to_set_an_answer_when_it_cannot_read_one(self):
         shell = self.shell()

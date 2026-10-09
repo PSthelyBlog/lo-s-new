@@ -64,6 +64,8 @@ class CompleteTest(Folders):
         self.assertEqual(complete("rule ", ""), ["sys.health "])            # the one command that asks for a judgement
         self.assertEqual(complete("trace sys.health ", "t"), ["temperature "])
         self.assertEqual(complete("rule sys.health memory ", ""), [])
+        self.assertEqual(complete("trace sys.health memory ", ""), ["from ", "up to "])     # a stretch of values
+        self.assertEqual(complete("trace sys.health memory ", "u"), ["up to "])
         self.assertEqual(complete("improve ", ""), ["lines"])
         self.assertEqual(complete("forget ", ""), [])
         cases.queue("order a large pizza", "user")

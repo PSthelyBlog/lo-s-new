@@ -4,8 +4,8 @@ A command asks the core, and the core asks here. Two things can be asked.
 
 A judgement is a closed question: one of a few answers for one value, such as whether a
 temperature is fine or worrying. It is answered from the surest source there is: an answer on
-record for that exact value, then a rule if one was made and it covers the value, and the student
-last. Every answer is recorded as a case with the run it was asked in, so that `trace` can show
+record, the user's own before the student's, then a rule if one was made and it covers the value,
+and the student last. Every answer is recorded as a case with the run it was asked in, so that `trace` can show
 where each came from and the user can set one themselves. The student can also be asked on
 purpose about values no run produced, to see where it draws its line before a rule is made.
 

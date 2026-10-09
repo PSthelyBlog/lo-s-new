@@ -63,6 +63,8 @@ def _after(table, words):
         return [name + " " for name in judging]
     if word in ("rule", "trace") and len(rest) == 1 and rest[0] in judging:
         return [name + " " for name in table[rest[0]].judges]
+    if word == "trace" and len(rest) == 2 and rest[0] in judging:        # a stretch: from VALUE or up to VALUE
+        return ["from ", "up to "]
     if word == "trace" and rest[0] in judging and rest[-1] == "is":      # trace COMMAND NAME VALUE is ANSWER
         found = rules.answers(rest[0], rest[1])
         return list(found[1]) if found else []

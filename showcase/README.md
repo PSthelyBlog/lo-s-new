@@ -388,7 +388,19 @@ Needs waiting: 0
 - **A new wording still goes to the student.** Only the lines that were accepted are remembered.
 - The command writes "1 days".
 
-SPEC.md lists the second, third and fourth of these as open.
+The second of these has been dealt with since. `trace` now takes `from VALUE` and `up to VALUE`,
+for a value and every one above or below it, so step 4 is three lines:
+
+```
+trace project.activity activity up to 90 days is active
+trace project.activity activity from 91 days is dormant
+trace project.activity activity from 365 days is abandoned
+```
+
+Replayed on the same projects, those gave the record that the eight lines gave here. They also
+answer every age themselves, so no rule was needed and `improve` proposed none: step 5 and its call
+to the teacher fall away for a user who knows where their lines are. A month on, with the student
+unreachable, the listing took 0.18 seconds. SPEC.md lists the third and fourth as open.
 
 ## Caveats
 

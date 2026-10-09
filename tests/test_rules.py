@@ -54,6 +54,25 @@ class RecordTest(Folders):
                                   ("85 °C", "worrying", "student"), ("95 °C", "worrying", "student"),
                                   ("100 °C", "worrying", "student")])
 
+    def test_a_stretch_the_user_set_answers_for_what_is_on_record_in_it_and_shows_where_it_starts(self):
+        def stretch(reach, value, answer):
+            cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
+                                       "value": value}, answer, "user", "accepted", reach=reach)
+
+        degrees(60, 70, 85, 95)
+        stretch("from", "65 °C", "worrying")
+        # 70 °C was fine to the student. The value below the start is not listed: nobody settled it.
+        self.assertEqual(rules.answers("sys.health", "temperature")[2], [
+            ("60 °C", "fine", "student"), ("65 °C", "worrying", "user"), ("70 °C", "worrying", "user"),
+            ("85 °C", "worrying", "user"), ("95 °C", "worrying", "user")])
+        stretch("up to", "64.5 °C", "fine")
+        self.assertEqual(rules.answers("sys.health", "temperature")[2][:4], [
+            ("60 °C", "fine", "user"), ("64 °C", "fine", "user"), ("64.5 °C", "fine", "user"), ("65 °C", "worrying", "user")])
+        shown, held = rules.split(rules.answers("sys.health", "temperature")[2])
+        self.assertEqual(held, [])                      # all of it is the user's now, and none of that is held back
+        self.assertEqual(rules.summary(rules.answers("sys.health", "temperature")[2]),
+                         ["  60 to 64.5 °C: fine", "  65 to 95 °C: worrying"])
+
     def test_only_answers_to_the_question_as_it_is_asked_now_count(self):
         degrees(40, 50, 60, 70, 85, 95, question="Is this fine for a server room?")
         degrees(41, 91)

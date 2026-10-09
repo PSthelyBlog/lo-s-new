@@ -42,14 +42,20 @@ def judgements(table):
     found, in_force = [], rules.installed()
     for command in table.values():
         for name in command.judges:
-            asked = [case for case in cases.judgements(command.name, name) if case.get("run") and case["by"] == "student"]
+            record = cases.judgements(command.name, name)
+
+            def stretched(question):    # a value in a stretch the user set is theirs for good: a rule adds nothing there
+                return (cases.judged(question, record) or {}).get("reach")
+
+            asked = [case for case in record if case.get("run") and case["by"] == "student" and not stretched(case["question"])]
             on_record, rule = rules.answers(command.name, name), in_force.get((command.name, name))
             typed, known = f"rule {command.name} {name}", len(on_record[2]) if on_record else 0
             if rule:
                 asked = [case for case in asked if case["run"] > rule.get("at", rule["date"])]
-                against = sum(1 for value, answer, who in on_record[2] if who == "user" and rules.answer(
-                    {"command": command.name, "name": name, "ask": on_record[0], "choices": on_record[1], "value": value}
-                ) not in (None, answer)) if on_record else 0
+                at = lambda value: {"command": command.name, "name": name, "ask": on_record[0], "choices": on_record[1],
+                                    "value": value}
+                against = sum(1 for value, answer, who in on_record[2] if who == "user" and not stretched(at(value))
+                              and rules.answer(at(value)) not in (None, answer)) if on_record else 0
                 if against:
                     found.append(Found(f"You set {count(against, 'answer')} for {name} in {command.name} that its rule "
                                        "gives otherwise. Yours come first for those values. A new rule made from the "

@@ -256,8 +256,8 @@ ways: a judgement, which is a closed question, and a question of the command's o
   the names under `judges`, and the core refuses any other. A judgement has 2 to 12 answers.
 - **Proposed.** The core answers from the surest source and records the case, with the run it was
   asked in:
-  1. an answer on record for this exact value: the one the user set, otherwise what the student
-     said before;
+  1. what is on record: the answer the user set for this exact value, then the one they set for
+     a stretch of values it lies in, then what the student said before for this exact value;
   2. a rule, if one is in force and it covers the value;
   3. the student, limited to the choices.
 - **Proposed.** The record holds for one question only: the same command, name, wording and
@@ -271,6 +271,20 @@ ways: a judgement, which is a closed question, and a question of the command's o
   of values that got the same answer. `trace COMMAND NAME VALUE is ANSWER` sets the answer for
   any value, judged before or not. This is how the user moves the line before a rule is made
   from it.
+- **Proposed.** With `from VALUE` or `up to VALUE` in place of the value, the answer holds for that
+  value and every one above it, or below it. This is how the user says where a line is in one
+  go. It is theirs, so it is answered from, for values nobody has judged as well.
+  - Values are told apart by their first number, and only one with the same text around it
+    belongs to a stretch.
+  - A stretch reaches as far as the next one set the same way. Where one that reaches up meets
+    one that reaches down, the one said last holds.
+  - An answer the user set for a single value stays, inside a stretch too. What the student said
+    there does not, and `trace` says which answers on record change.
+  - `trace COMMAND NAME` lists the stretches as they were said. The record shown to the teacher
+    for a rule holds the value each one starts at, and the value next to it on the other side
+    when the user settled that too, so a rule sees exactly where the answer changes.
+  - Where the user's stretches answer, a rule has nothing to add, and `improve` does not count
+    what the student was asked there.
 - **Proposed.** The student is asked with the question and the allowed answers at the start of
   the prompt and the value alone after it. Measured: that is what lets the server reuse its work
   when two kinds of judgement are asked in turn.
@@ -309,16 +323,19 @@ ways: a judgement, which is a closed question, and a question of the command's o
   judgement the user never looks at stays the student's opinion. `trace` is how it becomes theirs.
 - **Open.** The record answers only an exact value, so a command has to round what it has judged.
   `sys.health` judges whole degrees and whole per cent.
-- **Open.** A spread varies the first number in a value and nothing else, so a judgement of
-  something that is not a number in fixed text cannot be spread.
-- **Open.** An answer the user set cannot be handed back to the student. It can only be set again.
+- **Open.** A spread varies the first number in a value and nothing else, and a stretch goes by
+  that number too. So a judgement of something that is not a number in fixed text cannot be
+  spread, and no stretch can be set for it.
+- **Open.** An answer the user set cannot be handed back to the student, for one value or for a
+  stretch. It can only be set again.
+- **Open.** An answer can be set only for a judgement that has been asked once, because `trace`
+  takes the question and its choices from the record. So stretches that would answer every value
+  cannot be set while the student is unreachable and nothing is on record.
 - **Open.** A rule leaves the values between two answers to the student, and the spread that would
   narrow that stretch is offered only when too little is on record. A value that drifts, such
   as an age in days, walks into it, and with the student unreachable the whole command stops.
-  The user closes it by setting the value on each side of a line with `trace` before the rule
-  is made.
-- **Open.** An answer the user sets says nothing about the values beyond it. Where the student's
-  answers on record contradict it, each has to be set by hand before a rule can follow.
+  The user closes it by saying where the answer changes, with `from` or `up to`. lo-s does not
+  suggest that.
 - **Open.** A command that asks a model can draw lines that name nobody. In the trial one such
   line of fifteen went to it.
 
@@ -346,6 +363,7 @@ ways: a judgement, which is a closed question, and a question of the command's o
     its answers standing.
   - **a judgement that deserves a rule**: one the student was asked in a run, when enough is on
     record for a rule; or three times or more, when the manifest gives a range to spread over.
+    What it was asked about values in a stretch the user has since set does not count.
   - **a rule to make again**: one the user has overruled, or one that left the student to answer
     three times or more since it was made while the record grew.
   - **example lines gone astray**: a written command's own example lines that reached it at one
@@ -538,6 +556,15 @@ improvements.
   - A day on, the rule answered 12 of 12. A month on, with the student unreachable, both settled
     lines and the typed command ran, in 0.64 seconds, and a project that had crossed a line was
     listed on its other side. A line never typed before said that the student did not answer.
+- Stretches (`within` and `stretches` in `los/cases.py`, `answers` in `los/rules.py`, and
+  `trace COMMAND NAME from VALUE is ANSWER` and `up to` in the shell): an answer the user sets
+  for a value and every one above or below it.
+- Replayed on 2026-10-09 on the showcase's projects and command, with the student and no teacher
+  set up. Three lines of `trace` gave the record that eight had given: up to 90 days active,
+  from 91 dormant, from 365 abandoned. `improve` proposed no rule. A day on, and a month on with
+  the student unreachable, all twelve ages were answered from what the user had set, and the
+  listing took 0.18 seconds. The settled line had taken 0.64 with the rule, which runs in a
+  sandbox of its own for each age.
 
 ## What the first build measured
 

@@ -22,8 +22,11 @@ holds is kept for what can be built from it later. There are two kinds of questi
                 answer the user set themselves
     run         the run of the command it was asked in; a user's answer belongs to no run, and
                 neither does one the student gave when it was asked on purpose (spread: true)
+    reach       when the user set the answer for a whole stretch of values: "from", for this value
+                and every one above it, or "up to", for this value and every one below it
 """
 import datetime
+import re
 
 from . import state
 
@@ -68,18 +71,75 @@ def taken_back(line, answer):
     return wrong
 
 
-def judged(asked):
-    """The answer on record for exactly this question and value: the one the user set if they
-    set one, otherwise what the student said. Returns that case, or nothing.
+NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def varying(value):
+    """A value split around its first number, as (the text before, the number, the text after),
+    or nothing when it holds no number."""
+    found = NUMBER.search(value)
+    return (value[:found.start()], found.group(), value[found.end():]) if found else None
+
+
+def same_question(one, other):
+    """Whether two judgement questions differ in the value at most."""
+    return all(one[key] == other[key] for key in ("command", "name", "ask", "choices"))
+
+
+def judged(asked, among=None):
+    """The answer on record for this question and value, the surest first: the one the user set
+    for exactly this value, then the one they set for a stretch of values it lies in, and last
+    what the student said for exactly this value. Returns that case, or nothing. `among` is the
+    cases to look in, when the caller has read them already.
 
     What a rule answered is not a case to answer from. It is worked out again each time, so that
     removing a rule removes its answers with it."""
-    found = None
-    for case in state.read("cases"):
-        if case["kind"] == "judgement" and case["question"] == asked and case["by"] in ("user", "student") \
-                and (case["by"] == "user" or not found or found["by"] != "user"):
-            found = case
-    return found
+    exact, said, drawn = None, None, []
+    for case in state.read("cases") if among is None else among:
+        if case["kind"] != "judgement" or case["by"] not in ("user", "student"):
+            continue
+        if case.get("reach"):
+            if same_question(asked, case["question"]):
+                drawn.append(case)
+        elif case["question"] == asked:
+            exact, said = (case, said) if case["by"] == "user" else (exact, case)
+    return exact or within(asked["value"], drawn) or said
+
+
+def within(value, drawn):
+    """The stretch a value lies in, of those the user set for one question in the order they were
+    set, or nothing. Values are told apart by their first number, and only a value with the same
+    text around it belongs to a stretch.
+
+    A stretch reaches from its own value up, or down, as far as the next one set the same way:
+    of two that reach the same way, the one that starts nearer to the value holds. Where one
+    that reaches up meets one that reaches down, the one set last holds."""
+    parts = varying(value)
+    if not parts:
+        return None
+    number, up, down = float(parts[1]), None, None
+    for order, case in enumerate(drawn):
+        edge = varying(case["question"]["value"])
+        if not edge or (edge[0], edge[2]) != (parts[0], parts[2]):
+            continue
+        start = float(edge[1])
+        if case["reach"] == "from" and start <= number and (not up or start >= up[0]):
+            up = (start, order, case)
+        elif case["reach"] == "up to" and start >= number and (not down or start <= down[0]):
+            down = (start, order, case)
+    return max((one for one in (up, down) if one), key=lambda one: one[1], default=(None, None, None))[2]
+
+
+def stretches(asked, among=None):
+    """The stretches the user set for a judgement as it is asked now, in the order of their
+    values. One set again at the same value, reaching the same way, takes the earlier one's place."""
+    latest = {}
+    for case in state.read("cases") if among is None else among:
+        if case["kind"] == "judgement" and case["by"] == "user" and case.get("reach") \
+                and same_question(asked, case["question"]) and varying(case["question"]["value"]):
+            before, number, after = varying(case["question"]["value"])
+            latest[before, float(number), after, case["reach"]] = case
+    return [latest[key] for key in sorted(latest, key=lambda key: (key[1], key[3] == "from"))]
 
 
 def judgements(command=None, name=None):
