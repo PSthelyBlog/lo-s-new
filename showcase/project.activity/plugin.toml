@@ -1,0 +1,16 @@
+name = "project"
+
+[origin]
+words = "say which of my projects are active, dormant or abandoned, going by how long since anything in each one changed. Where those lines fall is my own opinion, so do not fix a number of days in the code and do not make me pass one: have each age judged"
+written_by = "claude-opus-5-5"
+provider = "claude-cli"
+date = "2026-10-09"
+
+[commands.activity]
+description = "Say which projects in a folder are active, dormant or abandoned, going by how long since anything in each one last changed"
+effect = "read"
+judges = ["activity"]
+ranges = { activity = [0, 3650] }
+[commands.activity.params]
+path = { hint = "folder that holds the projects, one subfolder each; default the current one", path = "read", default = "." }
+only = "show only one kind: active, dormant or abandoned; leave out for all"

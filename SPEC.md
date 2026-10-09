@@ -312,6 +312,13 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Open.** A spread varies the first number in a value and nothing else, so a judgement of
   something that is not a number in fixed text cannot be spread.
 - **Open.** An answer the user set cannot be handed back to the student. It can only be set again.
+- **Open.** A rule leaves the values between two answers to the student, and the spread that would
+  narrow that stretch is offered only when too little is on record. A value that drifts, such
+  as an age in days, walks into it, and with the student unreachable the whole command stops.
+  The user closes it by setting the value on each side of a line with `trace` before the rule
+  is made.
+- **Open.** An answer the user sets says nothing about the values beyond it. Where the student's
+  answers on record contradict it, each has to be set by hand before a rule can follow.
 - **Open.** A command that asks a model can draw lines that name nobody. In the trial one such
   line of fifteen went to it.
 
@@ -461,7 +468,6 @@ improvements.
   - `improve lines` put 24 example lines of four written commands to the student. 23 reached
     their command. "copy the src directory to src.orig" went to `fs.move`, as it had when
     `fs.copy` was first tried, so nothing had changed.
-- Not tried on the teacher yet: what it is told about `ranges`.
 - Line editing (`los/terminal.py`): history kept in the state folder, completion with Tab, and a
   command put on the line to correct. In the shell: `e` as an answer about a command a model
   chose, and questions that take only a clear yes or no.
@@ -508,6 +514,30 @@ improvements.
   the two lines the record holds that correction for (0.45 against 0.25). A French rewording
   the student found nothing for was offered the command of their settled line, which is 0.30
   like it: little above the level, and the settled line has a typing mistake in it.
+- Tried on 2026-10-09 from one need to no model: "which of my projects have I abandoned", in
+  scratch folders with a made-up folder of twelve projects, with three teacher calls.
+  `showcase/` has the transcripts, the command as the teacher wrote it and how to run it again.
+  - A rehearsal came first, with a hand-written command and a stand-in for the teacher program,
+    and no call. Its rule was made from the folders' own ages and said nothing between 44 and
+    88 days. Two days on a folder stood at 46 days, and with the student unreachable the
+    command stopped.
+  - The line found no command and was queued. Asked a second time, `improve` listed it.
+  - The teacher's first answer (62 seconds) had no judgement in it: `fs.stale`, with the age that
+    counts as abandoned as a parameter. It was not installed. Asked again with the words that
+    where the lines fall is the user's opinion (57 seconds), it wrote `project.activity`, which
+    has each age judged as active, dormant or abandoned and gives a range of 0 to 3650 days.
+    Each passed its 5 checks, and all 10 lines went where they belong under every description.
+  - The student gave the command with the folder left out, and `e` corrected that once. A
+    rewording and the same question in French got the same answer and were shown the correction.
+  - The student called 131 days active and 918 days dormant. In the rehearsal, under a question
+    that differed by a few words, it called 88 days dormant.
+  - Eight answers were set with `trace`: four that say where two lines are (90 and 91 days, 364
+    and 365), and four that overrule what the student had said on the wrong side of them.
+  - `improve` then proposed a rule. One call of 6 seconds gave one with no stretch left open. It
+    gave the answer on record for all 15 it was shown and the 1 held back.
+  - A day on, the rule answered 12 of 12. A month on, with the student unreachable, both settled
+    lines and the typed command ran, in 0.64 seconds, and a project that had crossed a line was
+    listed on its other side. A line never typed before said that the student did not answer.
 
 ## What the first build measured
 

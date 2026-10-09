@@ -1,0 +1,50 @@
+lo-s> which of my projects have I abandoned
+→ project.activity --path ~/Projects --only abandoned  (remembered)
+abandoned   413 days  inkwell
+abandoned   656 days  juniper
+abandoned   919 days  kiln
+abandoned  1311 days  lantern
+5 active, 3 dormant, 4 abandoned
+lo-s> project.activity --path ~/Projects
+active        2 days  atlas
+active        7 days  birdsong
+active       20 days  cellar-map
+active       45 days  drift
+active       89 days  ember-cli
+dormant     132 days  fathom
+dormant     204 days  glasswing
+dormant     298 days  harbor-log
+abandoned   413 days  inkwell
+abandoned   656 days  juniper
+abandoned   919 days  kiln
+abandoned  1311 days  lantern
+5 active, 3 dormant, 4 abandoned
+lo-s> trace
+project.activity asked for 12 judgements the last time it needed any:
+1. activity of 2 days: active  (a rule)
+2. activity of 7 days: active  (a rule)
+3. activity of 20 days: active  (a rule)
+4. activity of 45 days: active  (a rule)
+5. activity of 89 days: active  (a rule)
+6. activity of 132 days: dormant  (a rule)
+7. activity of 204 days: dormant  (a rule)
+8. activity of 298 days: dormant  (a rule)
+9. activity of 413 days: abandoned  (a rule)
+10. activity of 656 days: abandoned  (a rule)
+11. activity of 919 days: abandoned  (a rule)
+12. activity of 1311 days: abandoned  (a rule)
+To set one yourself: trace NUMBER ANSWER, such as trace 1 dormant.
+lo-s> improve
+Nothing stands out in what is on record so far.
+improve lines puts each written command's own example lines to the student again, to see whether they reach it. That is free.
+lo-s> help project.activity
+Say which projects in a folder are active, dormant or abandoned, going by how long since anything in each one last changed
+Usage: project.activity [--path VALUE] [--only VALUE]
+  --path  folder that holds the projects, one subfolder each; default the current one
+  --only  show only one kind: active, dormant or abandoned; leave out for all
+It only reads, so it runs as soon as you type it.
+It may read what you give as --path.
+It sees no other file of yours and has no network.
+It asks for a judgement of activity: one of a few answers for a value, from what is on record, a rule or the student. trace shows them.
+A rule answers activity where it can, made from 16 answers on 2026-10-09.
+lo-s> exit

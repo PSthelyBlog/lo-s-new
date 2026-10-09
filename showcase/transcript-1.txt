@@ -1,0 +1,291 @@
+lo-s> which of my projects have I abandoned
+Nothing here does that yet. It is queued as need 1. delegate 1 asks claude-opus-5-5 about it, and forget 1 drops it.
+lo-s> which of my projects have I abandoned
+Nothing here does that yet. It is already queued as need 1. delegate 1 asks claude-opus-5-5 about it, and forget 1 drops it.
+lo-s> lesquels de mes projets ai-je abandonnés
+Nothing here does that yet. It is queued as need 2. delegate 2 asks claude-opus-5-5 about it, and forget 2 drops it.
+lo-s> improve
+1. You have asked 2 times for something nothing does: "which of my projects have I abandoned".
+   delegate 1   (one call to the teacher)
+improve lines puts each written command's own example lines to the student again, to see whether they reach it. That is free.
+lo-s> delegate 1
+Asking claude-opus-5-5 about: which of my projects have I abandoned
+Running 5 checks of fs.stale in the sandbox.
+Trying 3 descriptions of it on gemma-4-26B-A4B-it-qat-q4_0.gguf.
+fs.stale  Show which project folders inside a directory have been abandoned: the ones where no file has changed for a long time, longest first; not for finding single old files  (effect: read)
+  --path        directory that holds the projects, default the current one
+  --older-than  how long untouched counts as abandoned, such as 3 months or 1 year; default 6 months
+Why: No command yet looks at when the folders inside a directory were last worked on, so this adds fs.stale. It treats each folder in the directory you name (the current one if you name none) as a project and lists those where no file has changed for 6 months, or for the time you give.
+
+It may read what you give as --path.
+It sees no other file of yours and has no network.
+
+Checks: 5 of 5 passed.
+Lines: with this description the student sent 10 of 10 where they belong. The other descriptions got 10 of 10, 10 of 10.
+
+"""fs.stale: which folders inside a directory have been left alone, and for how long."""
+import os
+import re
+import time
+
+from los import CommandError
+
+PERIODS = {"minute": 60, "hour": 3600, "day": 86400, "week": 7 * 86400, "month": 30 * 86400, "year": 365 * 86400}
+DEFAULT = "6 months"   # untouched this long counts as abandoned
+SHOWN = 50             # folders listed before the rest is counted instead
+
+
+def _age(text):
+    """Seconds, from text such as 30 days, 6 months or 1 year."""
+    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([a-z]+?)s?\s*", text.lower())
+    periods = [period for period in PERIODS if match and period.startswith(match[2])]
+    if len(periods) != 1:
+        raise CommandError(f"an age looks like 6 months or 1 year, not {text!r}")
+    return float(match[1]) * PERIODS[periods[0]]
+
+
+def _last_change(folder):
+    """When anything in the folder last changed: its newest file, or the folder itself if it has none."""
+    newest = 0
+    for parent, _, files in os.walk(folder):
+        for file in files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(parent, file)).st_mtime)
+            except OSError:
+                pass
+    return newest or os.lstat(folder).st_mtime
+
+
+def _ago(seconds):
+    days = int(seconds // 86400)
+    if days < 60:
+        return f"{days} day{'' if days == 1 else 's'}"
+    if days < 730:
+        return f"{days // 30} months"
+    return f"{days // 365} years"
+
+
+def do_stale(path=None, older_than=None):
+    if not path or not os.path.isdir(path):
+        raise CommandError(f"{path} is not a directory")
+    limit = older_than or DEFAULT
+    now = time.time()
+    cutoff = now - _age(limit)
+    # Each folder directly inside counts as one project; hidden ones such as .cache do not.
+    projects = sorted((_last_change(entry.path), entry.name) for entry in os.scandir(path)
+                      if entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."))
+    if not projects:
+        return f"{path} has no project folders in it."
+    stale = [(changed, name) for changed, name in projects if changed <= cutoff]
+    if not stale:
+        changed, name = projects[0]
+        return (f"No folder in {path} has gone untouched for {limit} ({len(projects)} looked at). "
+                f"The quietest is {name}, last changed {_ago(now - changed)} ago.")
+    lines = [f"{len(stale)} of {len(projects)} folders in {path} untouched for {limit} or more, longest first:"]
+    for changed, name in stale[:SHOWN]:
+        day = time.strftime("%Y-%m-%d", time.localtime(changed))
+        lines.append(f"{_ago(now - changed):>10}  {day}  {name}/")
+    if len(stale) > SHOWN:
+        lines.append(f"... and {len(stale) - SHOWN} more")
+    return "\n".join(lines)
+
+Install fs.stale? [y/N] n
+Not installed. What it wrote is kept in the state folder, in delegations.jsonl. Need 1 stays queued.
+lo-s> needs
+1. which of my projects have I abandoned  (2026-10-09)
+2. lesquels de mes projets ai-je abandonnés  (2026-10-09)
+lo-s> delegate say which of my projects are active, dormant or abandoned, going by how long since anything in each one changed. Where those lines fall is my own opinion, so do not fix a number of days in the code and do not make me pass one: have each age judged
+Asking claude-opus-5-5 about: say which of my projects are active, dormant or abandoned, going by how long since anything in each one changed. Where those lines fall is my own opinion, so do not fix a number of days in the code and do not make me pass one: have each age judged
+Running 5 checks of project.activity in the sandbox.
+Trying 3 descriptions of it on gemma-4-26B-A4B-it-qat-q4_0.gguf.
+project.activity  Say which projects in a folder are active, dormant or abandoned, going by how long since anything in each one last changed  (effect: read)
+  --path  folder that holds the projects, one subfolder each; default the current one
+  --only  show only one kind: active, dormant or abandoned; leave out for all
+Why: No command sorts projects by how recently they changed: fs.find and fs.list show ages but do not classify them. This new read-only command works out the days since each project folder last changed and has each age judged as active, dormant or abandoned, so where the lines fall is yours to see and set, with no number of days in the code.
+
+It may read what you give as --path.
+It sees no other file of yours and has no network.
+It asks for a judgement of activity: one of a few answers for a value, from what is on record, a rule or the student. trace shows them.
+
+Checks: 5 of 5 passed.
+Lines: with this description the student sent 10 of 10 where they belong. The other descriptions got 10 of 10, 10 of 10.
+
+"""Project commands: how recently each project in a folder was worked on."""
+import os
+import time
+
+from los import CommandError, judge
+
+STATES = ["active", "dormant", "abandoned"]
+QUESTION = "Nothing in a project has changed for this long. Is the project active, dormant or abandoned?"
+
+
+def _newest(folder):
+    """The latest modification time of the folder or of anything beneath it."""
+    newest = os.lstat(folder).st_mtime
+    for parent, folders, files in os.walk(folder):
+        for name in folders + files:
+            try:
+                newest = max(newest, os.lstat(os.path.join(parent, name)).st_mtime)
+            except OSError:
+                pass
+    return newest
+
+
+def do_activity(path=None, only=None):
+    if not path or not os.path.isdir(path):
+        raise CommandError(f"{path} is not a directory")
+    only = only.strip().lower() if only else None
+    if only and only not in STATES:
+        raise CommandError(f"--only is active, dormant or abandoned, not {only!r}")
+    now = time.time()
+    projects = []   # (whole days since the last change, name); hidden folders are not projects
+    for entry in os.scandir(path):
+        if entry.is_dir(follow_symlinks=False) and not entry.name.startswith("."):
+            days = max(0, int((now - _newest(entry.path)) // 86400))
+            projects.append((days, entry.name))
+    if not projects:
+        return f"{path} has no project folders in it."
+    projects.sort()     # most recently changed first
+    lines, counts = [], dict.fromkeys(STATES, 0)
+    for days, name in projects:
+        value = f"{days} days"
+        # Where active ends and abandoned begins is the user's opinion, so it is judged, not coded.
+        state = judge("activity", QUESTION, value, STATES)
+        counts[state] += 1
+        if not only or state == only:
+            lines.append(f"{state:<10}{value:>10}  {name}")
+    lines.append(", ".join(f"{counts[state]} {state}" for state in STATES))
+    return "\n".join(lines)
+
+Install project.activity? [y/N] y
+Installed project.activity in plugins/project.activity. Delete that folder to remove it.
+lo-s> which of my projects have I abandoned
+→ project.activity --only abandoned --path ~
+Run it? [Y/n/edit] e
+Correct it: project.activity --only abandoned --path ~/Projects
+Remembered: "which of my projects have I abandoned" means project.activity --only abandoned --path ~/Projects.
+That answers need 1, so it left the queue.
+abandoned  1310 days  lantern
+6 active, 5 dormant, 1 abandoned
+lo-s> show me the projects I gave up on
+The student gave project.activity --only abandoned. You corrected that for "which of my projects have I abandoned".
+→ project.activity --path ~/Projects --only abandoned  (your correction)
+Run it? [Y/n/edit] 
+abandoned  1310 days  lantern
+6 active, 5 dormant, 1 abandoned
+lo-s> lesquels de mes projets ai-je abandonnés
+The student gave project.activity --only abandoned. You corrected that for "which of my projects have I abandoned".
+→ project.activity --path ~/Projects --only abandoned  (your correction)
+Run it? [Y/n/edit] 
+abandoned  1310 days  lantern
+6 active, 5 dormant, 1 abandoned
+That answers need 2, so it left the queue.
+lo-s> project.activity --path ~/Projects
+active        1 days  atlas
+active        6 days  birdsong
+active       19 days  cellar-map
+active       44 days  drift
+active       88 days  ember-cli
+active      131 days  fathom
+dormant     203 days  glasswing
+dormant     297 days  harbor-log
+dormant     412 days  inkwell
+dormant     655 days  juniper
+dormant     918 days  kiln
+abandoned  1310 days  lantern
+6 active, 5 dormant, 1 abandoned
+lo-s> trace
+project.activity asked for 12 judgements the last time it needed any:
+1. activity of 1 days: active  (on record, from the student)
+2. activity of 6 days: active  (on record, from the student)
+3. activity of 19 days: active  (on record, from the student)
+4. activity of 44 days: active  (on record, from the student)
+5. activity of 88 days: active  (on record, from the student)
+6. activity of 131 days: active  (on record, from the student)
+7. activity of 203 days: dormant  (on record, from the student)
+8. activity of 297 days: dormant  (on record, from the student)
+9. activity of 412 days: dormant  (on record, from the student)
+10. activity of 655 days: dormant  (on record, from the student)
+11. activity of 918 days: dormant  (on record, from the student)
+12. activity of 1310 days: abandoned  (on record, from the student)
+To set one yourself: trace NUMBER ANSWER, such as trace 1 dormant.
+lo-s> trace project.activity activity 90 days is active
+Set: project.activity takes activity of 90 days as active from now on.
+lo-s> trace project.activity activity 91 days is dormant
+Set: project.activity takes activity of 91 days as dormant from now on.
+lo-s> trace project.activity activity 364 days is dormant
+Set: project.activity takes activity of 364 days as dormant from now on.
+lo-s> trace project.activity activity 365 days is abandoned
+Set: project.activity takes activity of 365 days as abandoned from now on.
+lo-s> trace 6 dormant
+Set: project.activity takes activity of 131 days as dormant from now on.
+lo-s> trace 9 abandoned
+Set: project.activity takes activity of 412 days as abandoned from now on.
+lo-s> trace 10 abandoned
+Set: project.activity takes activity of 655 days as abandoned from now on.
+lo-s> trace 11 abandoned
+Set: project.activity takes activity of 918 days as abandoned from now on.
+lo-s> project.activity --path ~/Projects
+active        1 days  atlas
+active        6 days  birdsong
+active       19 days  cellar-map
+active       44 days  drift
+active       88 days  ember-cli
+dormant     131 days  fathom
+dormant     203 days  glasswing
+dormant     297 days  harbor-log
+abandoned   412 days  inkwell
+abandoned   655 days  juniper
+abandoned   918 days  kiln
+abandoned  1310 days  lantern
+5 active, 3 dormant, 4 abandoned
+lo-s> trace project.activity activity
+On record for activity in project.activity, 16 answers, 8 of them set by you:
+  1 to 90 days: active
+  91 to 364 days: dormant
+  365 to 1310 days: abandoned
+To set one yourself: trace project.activity activity VALUE is ANSWER, such as trace project.activity activity 1 days is dormant.
+lo-s> improve
+1. project.activity has asked the student about activity 12 times, 7.9 s in all. 16 answers are on record, enough for a rule to answer in its place.
+   rule project.activity activity   (one call to the teacher)
+improve lines puts each written command's own example lines to the student again, to see whether they reach it. That is free.
+lo-s> stats
+Plain-language lines: 6
+Answered from memory: 0, saving about 0.0 s of model time
+Answered by the student: 6, taking 9.1 s (0 accepted, 3 declined, 3 where nothing fitted)
+Offered from another line of yours: 2 (2 as your correction of the student's answer, 0 where it found nothing; 2 accepted)
+Settled by you with means: 1
+Taken back with wrong: 0
+Judgements inside commands: 60 (48 from the record and 0 by a rule, saving about 30.2 s; 12 by the student, taking 7.9 s)
+Set by you with trace: 8
+Calls to the teacher: 2
+Needs waiting: 0
+lo-s> rule project.activity activity
+On record for activity in project.activity, 16 answers:
+  1 to 90 days: active
+  91 to 364 days: dormant
+  365 to 1310 days: abandoned
+Asking claude-opus-5-5 for a rule from 15 answers on record for activity in project.activity. 1 more is held back to test it.
+Trying it on all 16 in the sandbox.
+import re
+
+def rule(value):
+    # Expects text like "90 days"; anything else goes back to the student.
+    if not isinstance(value, str):
+        return None
+    m = re.fullmatch(r"\s*(\d+) days?\s*", value)
+    if not m:
+        return None
+    days = int(m.group(1))
+    if days <= 90:
+        return "active"
+    if days <= 364:
+        return "dormant"
+    return "abandoned"
+
+Why: The answers draw two sharp lines: up to 90 days unchanged is active, 91 to 364 days is dormant, and 365 days or more is abandoned. Both boundaries are pinned by the user's own answers (90/91 and 364/365), and the student's answers all agree with them. Three months and one year are sensible cut-offs for this question. The rule returns None for anything not written as a whole number of days.
+It gives the answer on record for all 15 it was shown. Of the 1 held back, it gives the answer on record for 1 and leaves 0 to the student.
+Use this rule for activity in project.activity? [y/N] y
+Installed. project.activity now asks the rule for activity before the student, and the student only when the rule has no answer.
+Delete state/rules/project.activity.activity.py to remove it.

@@ -1,0 +1,58 @@
+lo-s> which of my projects have I abandoned
+→ project.activity --path ~/Projects --only abandoned  (remembered)
+abandoned   442 days  inkwell
+abandoned   685 days  juniper
+abandoned   948 days  kiln
+abandoned  1340 days  lantern
+4 active, 4 dormant, 4 abandoned
+lo-s> lesquels de mes projets ai-je abandonnés
+→ project.activity --path ~/Projects --only abandoned  (remembered)
+abandoned   442 days  inkwell
+abandoned   685 days  juniper
+abandoned   948 days  kiln
+abandoned  1340 days  lantern
+4 active, 4 dormant, 4 abandoned
+lo-s> project.activity --path ~/Projects
+active       31 days  atlas
+active       36 days  birdsong
+active       49 days  cellar-map
+active       74 days  drift
+dormant     118 days  ember-cli
+dormant     161 days  fathom
+dormant     233 days  glasswing
+dormant     327 days  harbor-log
+abandoned   442 days  inkwell
+abandoned   685 days  juniper
+abandoned   948 days  kiln
+abandoned  1340 days  lantern
+4 active, 4 dormant, 4 abandoned
+lo-s> trace
+project.activity asked for 12 judgements the last time it needed any:
+1. activity of 31 days: active  (a rule)
+2. activity of 36 days: active  (a rule)
+3. activity of 49 days: active  (a rule)
+4. activity of 74 days: active  (a rule)
+5. activity of 118 days: dormant  (a rule)
+6. activity of 161 days: dormant  (a rule)
+7. activity of 233 days: dormant  (a rule)
+8. activity of 327 days: dormant  (a rule)
+9. activity of 442 days: abandoned  (a rule)
+10. activity of 685 days: abandoned  (a rule)
+11. activity of 948 days: abandoned  (a rule)
+12. activity of 1340 days: abandoned  (a rule)
+To set one yourself: trace NUMBER ANSWER, such as trace 1 dormant.
+lo-s> which projects are still alive
+That is not a command, and the student, which reads plain language, did not answer: no answer from http://127.0.0.1:9/v1 ([Errno 111] Connection refused).
+If it is the local model, scripts/serve.sh starts it. Structured commands still work; type help to list them.
+lo-s> stats
+Plain-language lines: 9
+Answered from memory: 3, saving about 3.4 s of model time
+Answered by the student: 6, taking 9.1 s (0 accepted, 3 declined, 3 where nothing fitted)
+Offered from another line of yours: 2 (2 as your correction of the student's answer, 0 where it found nothing; 2 accepted)
+Settled by you with means: 1
+Taken back with wrong: 0
+Judgements inside commands: 120 (48 from the record and 60 by a rule, saving about 68.0 s; 12 by the student, taking 7.9 s)
+Set by you with trace: 8
+Calls to the teacher: 3 (2 by delegate, 1 for rules, 0 by commands)
+Needs waiting: 0
+lo-s> exit

@@ -78,6 +78,10 @@ Copied /home/you/work/config.yaml to /home/you/work/config.yaml.bak
 
 The transcript is put together from real runs and shortened, and the folder names are changed.
 
+[showcase/](showcase/README.md) follows one question as it ran, from start to finish: nothing can
+answer it, the teacher writes a command, the student makes its judgements, the user says where
+their own lines are, the teacher turns that into a rule, and in the end no model is asked.
+
 ## How it works
 
 - **Structured commands** have the form `plugin.verb --param value` and run as typed. No model is
@@ -310,6 +314,7 @@ The "Built so far" section of [SPEC.md](SPEC.md) has the rest, with what each tr
 - `scripts/serve.sh`: starts the student
 - `experiments/routing/`: the routing experiment and its results
 - `experiments/rewording/`: the rewording experiment; its lines are a user's own and are not kept
+- `showcase/`: one question followed from no command to no model, with its transcripts
 - `tests/`: run with `python3 -m unittest discover -s tests -t .`
 
 The tests use scripted models and never call a real one. They run commands in the real sandbox,

@@ -1,0 +1,204 @@
+{
+ "words": "say which of my projects are active, dormant or abandoned, going by how long since anything in each one changed. Where those lines fall is my own opinion, so do not fix a number of days in the code and do not make me pass one: have each age judged",
+ "plugin": "project",
+ "verb": "activity",
+ "effect": "read",
+ "descriptions": [
+  "Say which projects in a folder are active, dormant or abandoned, going by how long since anything in each one last changed",
+  "Sort the project folders inside a directory into active, dormant and abandoned by the time since their last change; not for finding old files (fs.find) or for listing a folder (fs.list)",
+  "Show for each project (each subfolder of a directory) how many days since it was last touched and whether that makes it active, dormant or abandoned"
+ ],
+ "params": [
+  {
+   "name": "path",
+   "hint": "folder that holds the projects, one subfolder each; default the current one",
+   "path": "read",
+   "default": "."
+  },
+  {
+   "name": "only",
+   "hint": "show only one kind: active, dormant or abandoned; leave out for all"
+  }
+ ],
+ "judges": [
+  "activity"
+ ],
+ "ranges": [
+  {
+   "name": "activity",
+   "low": "0",
+   "high": "3650"
+  }
+ ],
+ "code": "\"\"\"Project commands: how recently each project in a folder was worked on.\"\"\"\nimport os\nimport time\n\nfrom los import CommandError, judge\n\nSTATES = [\"active\", \"dormant\", \"abandoned\"]\nQUESTION = \"Nothing in a project has changed for this long. Is the project active, dormant or abandoned?\"\n\n\ndef _newest(folder):\n    \"\"\"The latest modification time of the folder or of anything beneath it.\"\"\"\n    newest = os.lstat(folder).st_mtime\n    for parent, folders, files in os.walk(folder):\n        for name in folders + files:\n            try:\n                newest = max(newest, os.lstat(os.path.join(parent, name)).st_mtime)\n            except OSError:\n                pass\n    return newest\n\n\ndef do_activity(path=None, only=None):\n    if not path or not os.path.isdir(path):\n        raise CommandError(f\"{path} is not a directory\")\n    only = only.strip().lower() if only else None\n    if only and only not in STATES:\n        raise CommandError(f\"--only is active, dormant or abandoned, not {only!r}\")\n    now = time.time()\n    projects = []   # (whole days since the last change, name); hidden folders are not projects\n    for entry in os.scandir(path):\n        if entry.is_dir(follow_symlinks=False) and not entry.name.startswith(\".\"):\n            days = max(0, int((now - _newest(entry.path)) // 86400))\n            projects.append((days, entry.name))\n    if not projects:\n        return f\"{path} has no project folders in it.\"\n    projects.sort()     # most recently changed first\n    lines, counts = [], dict.fromkeys(STATES, 0)\n    for days, name in projects:\n        value = f\"{days} days\"\n        # Where active ends and abandoned begins is the user's opinion, so it is judged, not coded.\n        state = judge(\"activity\", QUESTION, value, STATES)\n        counts[state] += 1\n        if not only or state == only:\n            lines.append(f\"{state:<10}{value:>10}  {name}\")\n    lines.append(\", \".join(f\"{counts[state]} {state}\" for state in STATES))\n    return \"\\n\".join(lines)\n",
+ "lines": [
+  {
+   "line": "say which of my projects are active, dormant or abandoned, going by how long since anything in each one changed",
+   "args": []
+  },
+  {
+   "line": "which of my projects have I abandoned",
+   "args": [
+    {
+     "name": "only",
+     "value": "abandoned"
+    }
+   ]
+  },
+  {
+   "line": "which projects in ~/code are still active",
+   "args": [
+    {
+     "name": "path",
+     "value": "~/code"
+    },
+    {
+     "name": "only",
+     "value": "active"
+    }
+   ]
+  },
+  {
+   "line": "how long since I touched each project in ~/work",
+   "args": [
+    {
+     "name": "path",
+     "value": "~/work"
+    }
+   ]
+  },
+  {
+   "line": "show the dormant projects under ~/src",
+   "args": [
+    {
+     "name": "path",
+     "value": "~/src"
+    },
+    {
+     "name": "only",
+     "value": "dormant"
+    }
+   ]
+  },
+  {
+   "line": "project activity",
+   "args": []
+  }
+ ],
+ "others": [
+  {
+   "line": "find files older than 1 year in ~/code",
+   "command": "fs.find"
+  },
+  {
+   "line": "list my projects folder sorted by time",
+   "command": "fs.list"
+  },
+  {
+   "line": "how much space do my projects use",
+   "command": "fs.usage"
+  },
+  {
+   "line": "delete the abandoned projects",
+   "command": "none"
+  }
+ ],
+ "checks": [
+  {
+   "args": [],
+   "files": [
+    {
+     "path": "alpha/main.py",
+     "content": "print('hello')\n"
+    },
+    {
+     "path": "beta/",
+     "content": ""
+    },
+    {
+     "path": "notes.txt",
+     "content": "not a project\n"
+    }
+   ],
+   "expect": "output",
+   "contains": [
+    "alpha",
+    "beta",
+    "0 days"
+   ]
+  },
+  {
+   "args": [
+    {
+     "name": "path",
+     "value": "code"
+    }
+   ],
+   "files": [
+    {
+     "path": "code/gamma/src/lib.c",
+     "content": "int x;\n"
+    },
+    {
+     "path": "code/delta/README",
+     "content": "delta\n"
+    }
+   ],
+   "expect": "output",
+   "contains": [
+    "gamma",
+    "delta",
+    "0 days"
+   ]
+  },
+  {
+   "args": [],
+   "files": [
+    {
+     "path": "notes.txt",
+     "content": "only a loose file here\n"
+    }
+   ],
+   "expect": "output",
+   "contains": [
+    "no project folders"
+   ]
+  },
+  {
+   "args": [
+    {
+     "name": "only",
+     "value": "dead"
+    }
+   ],
+   "files": [
+    {
+     "path": "alpha/",
+     "content": ""
+    }
+   ],
+   "expect": "error",
+   "contains": [
+    "active, dormant or abandoned"
+   ]
+  },
+  {
+   "args": [
+    {
+     "name": "path",
+     "value": "notes.txt"
+    }
+   ],
+   "files": [
+    {
+     "path": "notes.txt",
+     "content": "a file, not a folder\n"
+    }
+   ],
+   "expect": "error",
+   "contains": [
+    "not a directory"
+   ]
+  }
+ ]
+}
