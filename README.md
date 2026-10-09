@@ -20,18 +20,24 @@ lo-s> fs.list
       6B  2026-10-08 22:50  report.txt
 lo-s> how much memory is free
 → sys.status --what memory
-Run it? [Y/n]
+Run it? [Y/n/edit]
 Memory: 21.5 GB available of 30.8 GB
 lo-s> how much memory is free
 → sys.status --what memory  (remembered)
 Memory: 21.5 GB available of 30.8 GB
 lo-s> rename report.txt to report-final.txt
 → fs.move --source ~/work/report.txt --dest ~/work/report-final.txt
-It makes changes that cannot be undone. Run it? [y/N] y
+It makes changes that cannot be undone. Run it? [y/N/edit] y
 Moved /home/you/work/report.txt to /home/you/work/report-final.txt
+lo-s> what takes up the most space in my home folder
+→ fs.usage --path ~/work/home
+Run it? [Y/n/edit] e
+Correct it: fs.usage --path ~
+Remembered: "what takes up the most space in my home folder" means fs.usage --path ~.
+... the folders and their sizes ...
 lo-s> is my machine doing ok
 → sys.health
-Run it? [Y/n]
+Run it? [Y/n/edit]
 The machine looks healthy: memory 70% free, of 31 GB; temperature 52 °C.
 lo-s> trace
 sys.health asked for 2 judgements the last time it needed any:
@@ -61,7 +67,7 @@ Install fs.copy? [y/N] y
 Installed fs.copy in plugins/fs.copy. Delete that folder to remove it.
 Now for what you asked: make a backup copy of config.yaml
 → fs.copy --source ~/work/config.yaml --dest ~/work/config.yaml.bak
-Run it? [y/N] y
+Run it? [y/N/edit] y
 Copied /home/you/work/config.yaml to /home/you/work/config.yaml.bak
 ```
 
@@ -77,10 +83,16 @@ The transcript is put together from real runs and shortened, and the folder name
   with every path written out: that line is what will run and all that it can touch.
 - **Plain language** goes to the student, which picks one command and fills in its parameters,
   or says that nothing fits. Its choice is shown before anything runs. Enter accepts a command
-  that only reads; anything else needs a typed yes.
+  that only reads; anything else needs a typed yes. Only `y`, `yes`, `n` and `no` are answers,
+  so a line typed too soon is never taken for one.
 - **A line you accepted is remembered** and answered without a model from then on, whatever
   other commands are installed later. `wrong` takes a choice back, and `means` lets you say
-  yourself what a line means.
+  yourself what a line means. Answering `e` to the question does that in one go: the command
+  is put on the line for you to correct. The student often has the right command with one
+  wrong value.
+- **The prompt keeps your lines and completes them.** Memory answers a line only when it is typed
+  word for word, so the lines you type are kept from one session to the next, and Up or Ctrl-R
+  brings one back. Tab completes a command, its parameters, a path, and a line you have settled.
 - **A line nothing fits is queued as a need.** `delegate`, followed by a need's number or by what
   you want in your own words, asks the teacher. One call gives one of four answers: run a
   command that exists, a new command it wrote, a question for you, or the news that lo-s cannot
@@ -238,8 +250,9 @@ audited how lo-s uses it.
 ## Where things are kept
 
 - `state/` holds what the shell records: every answered question (`cases.jsonl`), the queue of
-  needs, what commands asked the core for, the teacher's answers, the rules, and each plugin's
-  data. It is yours and is ignored by git. `LOS_STATE` points elsewhere.
+  needs, what commands asked the core for, the teacher's answers, the rules, the lines you
+  typed (`history`), and each plugin's data. It is yours and is ignored by git. `LOS_STATE`
+  points elsewhere.
 - `plugins/` holds the starter commands. A command the teacher wrote lives in a folder of its own
   named `plugin.verb`, with the words it was written for. Deleting the folder removes the
   command. Those folders are ignored by git too. `LOS_PLUGINS` points elsewhere.
@@ -258,6 +271,11 @@ student agreed with a reference, not that its answers are right.
   commands. The first line after the table changes takes 2 to 9 seconds.
   [experiments/routing](experiments/routing/README.md) has the method and every recorded answer.
 - Showing the student the user's nearest confirmed lines did not clearly help, and is left out.
+- A settled line said in other words got the settled command and values from the student for
+  60 of 68 rewordings, as often as the settled lines themselves when asked as if new. Matching
+  a typed line to the settled ones by likeness is left out: a line with another value is more
+  like the settled line than a rewording is.
+  [experiments/rewording](experiments/rewording/README.md) has the method and the counts.
 - A judgement takes 0.6 seconds, and a rule answers in 0.04.
 - The student's line moves with the wording of a question: over five wordings it found free
   memory worrying only at 1%, or up to 15%. That is why its judgements are shown, can be set by
@@ -268,6 +286,7 @@ The "Built so far" section of [SPEC.md](SPEC.md) has the rest, with what each tr
 ## Layout
 
 - `los/shell.py`: the shell and its own words
+- `los/terminal.py`: history, completion with Tab, and a line to correct
 - `los/plugins.py`, `los/parse.py`: manifests, the command table, structured command lines
 - `los/sandbox.py`, `los/inside/`: running a command in the sandbox, and what it can ask the core for
 - `los/route.py`, `los/cases.py`: asking the student about a line; the record of answers and needs
@@ -278,6 +297,7 @@ The "Built so far" section of [SPEC.md](SPEC.md) has the rest, with what each tr
 - `plugins/`: the starter commands, in `fs`, `note` and `sys`
 - `scripts/serve.sh`: starts the student
 - `experiments/routing/`: the routing experiment and its results
+- `experiments/rewording/`: the rewording experiment; its lines are a user's own and are not kept
 - `tests/`: run with `python3 -m unittest discover -s tests -t .`
 
 The tests use scripted models and never call a real one. They run commands in the real sandbox,

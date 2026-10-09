@@ -92,10 +92,12 @@ NONE = {"call": {"command": "none"}}
 class ShellCase(Folders):
     """A shell whose commands, student and user are all scripted."""
 
-    def shell(self, *student_says, answers=(), result=None, commands=TABLE):
-        self.shown, self.asked, self.ran = [], [], Ran(result)
+    def shell(self, *student_says, answers=(), result=None, commands=TABLE, edits=None):
+        """`edits` is what the user leaves each time a command is put on the line for them to
+        correct. Without it the shell has no line to edit, as when it is not at a terminal."""
+        self.shown, self.asked, self.ran, self.offered = [], [], Ran(result), []
         self.student = Scripted(*student_says)
-        replies = list(answers)
+        replies, left = list(answers), list(edits or ())
 
         def ask(question):
             self.asked.append(question)
@@ -103,4 +105,10 @@ class ShellCase(Folders):
                 raise EOFError
             return replies.pop(0)
 
-        return Shell(commands, ask, self.shown.append, self.ran, self.student)
+        def edit(prompt, text):
+            self.offered.append((prompt, text))
+            if not left:
+                raise EOFError
+            return left.pop(0)
+
+        return Shell(commands, ask, self.shown.append, self.ran, self.student, edit=None if edits is None else edit)

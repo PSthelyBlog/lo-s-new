@@ -25,6 +25,15 @@ class ShellTest(ShellCase):
         self.shell().handle("fs.move --source a --dest b")      # the question hits end of input
         self.assertEqual(self.ran.calls, [])
 
+    def test_only_a_clear_yes_or_no_is_an_answer(self):
+        # A line typed too soon is neither, even when it starts with a y.
+        self.shell(answers=["yes but in ~/work", "fs.list", "YES"]).handle("fs.move --source a --dest b")
+        self.assertEqual(self.asked, ["It makes changes that cannot be undone. Run it? [y/N] "] * 3)
+        self.assertEqual(self.shown, ["→ fs.move --source a --dest b", "Answer y or n.", "Answer y or n.", "ran fs.move"])
+        for answers in (["nope", "n"], ["No"], ["yep"]):       # the last one ends with nobody left to ask
+            self.shell(answers=answers).handle("fs.move --source a --dest b")
+            self.assertEqual((self.ran.calls, self.shown[-1]), ([], "Not run."))
+
     def test_wrong_use_shows_how_to_type_it(self):
         self.shell().handle("fs.move --from a")
         self.assertEqual(self.shown, ["fs.move has no parameter --from\nUsage: fs.move [--source VALUE] [--dest VALUE]"])

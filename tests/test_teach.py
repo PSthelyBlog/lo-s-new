@@ -347,6 +347,19 @@ class DelegateTest(Case):
         shell.handle("stats")
         self.assertIn("Calls to the teacher: 1\n", self.shown[-1])
 
+    def test_the_command_the_teacher_chose_can_be_corrected_on_the_line(self):
+        (self.files / "a.txt").write_text("a")
+        shell = self.shell({"answer": "run", "reason": "fs.list shows a folder.", "command": "fs.list",
+                            "args": args(path="files")}, answers=["e"])
+        shell.edit = lambda prompt, text: f"{text.replace('files', str(self.files))} --sort-by size"
+        shell.handle("delegate what do I have in my files folder")
+        self.assertEqual(self.asked, ["Run it? [Y/n/edit] "])
+        self.assertEqual(self.shown[2], f'Remembered: "what do I have in my files folder" means fs.list --path {self.files} '
+                                        "--sort-by size.")
+        self.assertTrue(self.shown[3].endswith("a.txt"))
+        self.assertEqual([(case["by"], case["verdict"]) for case in state.read("cases")],
+                         [("teacher", "declined"), ("user", "accepted")])
+
     def test_a_queued_need_can_be_sent_by_its_number_and_leaves_the_queue_when_answered(self):
         shell = self.shell({"answer": "cannot", "reason": "It needs an account with a pizza place."},
                            {"answer": "run", "reason": "r", "command": "note.list", "args": []},

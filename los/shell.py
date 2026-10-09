@@ -15,7 +15,9 @@ absolute. That line is what will run and all that the command can touch.
 
 `delegate` is for what no command does yet, or for a user who does not know what to type: they
 say what they need, and the teacher answers with a command to run, a new command, a question or
-the news that lo-s cannot do it. `means` is the user saying themselves what a line means.
+the news that lo-s cannot do it. `means` is the user saying themselves what a line means. At a
+terminal they can say it at the question itself: answering e puts the chosen command on the
+input line to correct.
 
 A command may ask for a judgement while it runs. `trace` shows the judgements of the latest run
 and where each answer came from, and lets the user set one. `rule` has the teacher turn the
@@ -28,6 +30,8 @@ import os
 import pathlib
 import shutil
 import statistics
+import sys
+import textwrap
 import tomllib
 
 from . import cases, improve, judge, plugins, route, rules, sandbox, state, teach
@@ -39,7 +43,8 @@ BUILTINS = {
     "wrong": "wrong takes back the latest command chosen for a plain-language line, so that the line is no longer "
              "remembered that way. It then offers to queue the line as a need.",
     "means": "means COMMAND --parameter value says what the latest plain-language line means. It is remembered for "
-             "that line from then on, and the command runs.",
+             "that line from then on, and the command runs. At the prompt, answering e to Run it? does this in one "
+             "go: the command shown is put on the line for you to correct.",
     "needs": "needs lists the lines no command could handle, each with its number.",
     "forget": "forget NUMBER drops a queued need.",
     "delegate": "delegate WHAT YOU NEED, in your own words, asks the teacher what to do about it: run a command "
@@ -72,9 +77,11 @@ EXAMPLE = state.ROOT / "plugins" / "fs"     # the plugin the teacher is shown as
 
 
 class Shell:
-    def __init__(self, table, ask=input, out=print, run=sandbox.run, student=None, teacher=None, plugin_dir=None):
+    def __init__(self, table, ask=input, out=print, run=sandbox.run, student=None, teacher=None, plugin_dir=None,
+                 edit=None):
         self.table, self.ask, self.out, self.runner, self.student = table, ask, out, run, student
         self.teacher, self.plugin_dir = teacher, plugin_dir
+        self.edit = edit    # reads a line that starts out as a given text, where the terminal can do that
         self.minds = judge.Minds(student, teacher, self.confirm)    # what a running command reaches a model through
         self.said = None    # the latest plain-language line, so that `means` can settle it
         self.last = None    # that line and the command chosen for it, so that `wrong` can take the choice back
@@ -137,8 +144,8 @@ class Shell:
             command, args = self.table[answer["command"]], answer["args"]
             self.out("→ " + self.typed(command, args) + "  (remembered)")
             # The user agreed to this before, so reading runs at once. Changing anything still asks.
-            accepted = command.effect == "read" or self.agree(command)
-            cases.record("line", line, answer, "memory", "accepted" if accepted else "declined")
+            choice = command.effect == "read" or self.agree(command, args)
+            cases.record("line", line, answer, "memory", "accepted" if choice is True else "declined")
         else:
             if not self.student:
                 self.out("That is not a command, and no model is set up to read plain language. Give the student "
@@ -165,24 +172,47 @@ class Shell:
             # last time still holds: it is shown as doubted and Enter no longer runs it.
             doubted = cases.taken_back(line, answer)
             self.out("→ " + self.typed(command, args) + ("  (you said this was wrong)" if doubted else ""))
-            accepted = self.agree(command, doubted)
+            choice = self.agree(command, args, doubted)
             # Accepting settles the line. Declining does not: the choice may be right and simply
             # unwanted just now.
-            cases.record("line", line, answer, "student", "accepted" if accepted else "declined", **asked)
+            cases.record("line", line, answer, "student", "accepted" if choice is True else "declined", **asked)
         self.last = (line, answer)
-        if accepted:
+        if choice is True:
             self.run(command, args)
+        elif choice:        # the user corrected it, which is them saying what the line means
+            self.settle(*choice)
         elif doubted:
             self.out("Not run. " + FITS)
         else:
             self.out("Not run. If that was the wrong command for what you typed, say wrong, or say the right one "
                      "with means.")
 
-    def agree(self, command, doubted=False):
+    def agree(self, command, args, doubted=False):
         """Ask before running a command a model chose. Enter accepts one that only reads; anything
-        else, and a choice the user took back before, needs an explicit yes."""
-        return self.confirm((UNDONE if command.effect == "destructive" else "") + "Run it?",
-                            default=command.effect == "read" and not doubted)
+        else, and a choice the user took back before, needs an explicit yes. Where the terminal
+        lets a line be edited, the user may correct the command instead. Returns True to run it
+        as shown, False to leave it, or the command and values the user made of it."""
+        answer = self.confirm((UNDONE if command.effect == "destructive" else "") + "Run it?",
+                              default=command.effect == "read" and not doubted, edit=bool(self.edit))
+        return self.correct(command, args) if answer == "edit" else answer
+
+    def correct(self, command, args):
+        """Put a chosen command on the input line for the user to change. It is there as the
+        model gave it, before defaults are filled in and paths made absolute, because what the
+        user leaves is what gets remembered. Returns the command and values they made of it,
+        True when they left it as it was, and False when what they left is not a command."""
+        try:
+            line = self.edit("Correct it: ", render(command.name, args)).strip()
+            parsed = parse(line, self.table)
+        except EOFError:
+            return False
+        except UsageError as error:
+            self.out(f"{error}\nUsage: {usage(self.table[line.split()[0]])}")
+            return False
+        if not parsed:
+            self.out("That is not one of the commands help lists.")
+            return False
+        return True if (parsed[0].name, parsed[1]) == (command.name, args) else parsed
 
     def typed(self, command, args):
         """A command in full, as it will run: defaults filled in and every path absolute, with
@@ -222,7 +252,10 @@ class Shell:
         if not parsed:
             self.out("Usage: means COMMAND --parameter value, with one of the commands help lists.")
             return
-        command, args = parsed
+        self.settle(*parsed)
+
+    def settle(self, command, args):
+        """Remember what the user says the latest plain-language line means, and run it."""
         answer = {"command": command.name, "args": args}
         cases.record("line", self.said, answer, "user", "accepted")
         self.last = (self.said, answer)
@@ -297,13 +330,15 @@ class Shell:
         command, answer = self.table[advice.command], {"command": advice.command, "args": advice.args}
         self.out(f"{advice.reason}\n→ {self.typed(command, advice.args)}")
         # A model chose this, so it gets the care any such choice gets. Agreeing settles the words.
-        accepted = self.agree(command)
-        cases.record("line", words, answer, "teacher", "accepted" if accepted else "declined",
+        choice = self.agree(command, advice.args)
+        cases.record("line", words, answer, "teacher", "accepted" if choice is True else "declined",
                      model=self.teacher.model, seconds=meta.get("seconds"))
         self.said, self.last = words, (words, answer)
-        if accepted:
+        if choice is True:
             self.answered(words)
             self.run(command, advice.args)
+        elif choice:
+            self.settle(*choice)
         else:
             self.out("Not run. If that was the wrong command for what you want, say wrong, or say the right one "
                      "with means.")
@@ -666,26 +701,41 @@ class Shell:
         elif result.text:
             self.out(result.text)
 
-    def confirm(self, question, default):
-        try:
-            answer = self.ask(f"{question} [{'Y/n' if default else 'y/N'}] ").strip().lower()
-        except EOFError:  # nobody is there to agree
-            return False
-        return default if not answer else answer.startswith("y")
+    def confirm(self, question, default, edit=False):
+        """Ask a question that takes yes or no. Enter gives the default. Only y, yes, n and no are
+        answers. Anything else may be the next line typed too soon, so it is taken for neither
+        and the question is asked again. With `edit`, e or edit is a third answer, returned as
+        "edit"."""
+        choices = ("Y/n" if default else "y/N") + ("/edit" if edit else "")
+        while True:
+            try:
+                answer = self.ask(f"{question} [{choices}] ").strip().lower()
+            except EOFError:  # nobody is there to agree
+                return False
+            if not answer:
+                return default
+            if answer in ("y", "yes", "n", "no"):
+                return answer.startswith("y")
+            if edit and answer in ("e", "edit"):
+                return "edit"
+            self.out("Answer y or n" + (", or e to correct the command first." if edit else "."))
 
     def help(self, names):
         if not names:
             width = max(map(len, self.table), default=0)
             self.out("\n".join(f"{name:{width}}  {self.table[name].description}" for name in sorted(self.table)))
-            self.out("\nType a command as NAME --parameter value, or say what you want in your own words: the\n"
-                     "command that fits is shown before it runs. A line you accepted is remembered. wrong\n"
-                     "takes the latest choice back, and means COMMAND says what the line does mean.\n"
-                     "delegate WHAT YOU NEED asks the teacher, which can write a new command; needs lists\n"
-                     "what nothing could do yet, and forget NUMBER drops one. trace shows the judgements\n"
-                     "the latest command asked for, and rule COMMAND NAME has the teacher turn one into\n"
-                     "code. improve lists what lo-s could do better, with what to type for each, and stats\n"
-                     "counts who answered. help NAME explains a command and says what it may touch; each\n"
-                     "runs in a sandbox that holds only that. exit leaves.")
+            self.out("\n" + textwrap.fill(
+                "Type a command as NAME --parameter value, or say what you want in your own words: the command "
+                "that fits is shown before it runs. " + (
+                    "Answer e there to correct it first. Tab completes what you are typing: a command, its "
+                    "parameters, a path, or a line you settled. " if self.edit else "") +
+                "A line you accepted is remembered. wrong takes the latest choice back, and means COMMAND says "
+                "what the line does mean. delegate WHAT YOU NEED asks the teacher, which can write a new command; "
+                "needs lists what nothing could do yet, and forget NUMBER drops one. trace shows the judgements "
+                "the latest command asked for, and rule COMMAND NAME has the teacher turn one into code. improve "
+                "lists what lo-s could do better, with what to type for each, and stats counts who answered. "
+                "help NAME explains a command and says what it may touch; each runs in a sandbox that holds only "
+                "that. exit leaves.", width=88))
             return
         for name in names:
             if name in BUILTINS:
@@ -727,11 +777,13 @@ def main(argv=None):
         return provider(config["providers"][chosen]) if chosen else None
 
     shell = Shell(table, student=role("student"), teacher=role("teacher"), plugin_dir=plugin_dir)
-    if opts.line is None:
-        import readline  # noqa: F401  gives input() line editing and history
+    read = input
+    if opts.line is None and sys.stdin.isatty() and sys.stdout.isatty():
+        from . import terminal      # history, completion and a line to correct, for a person at the prompt
+        read, shell.edit = terminal.start(lambda: shell.table, state.directory() / "history")
     while True:
         try:
-            if not shell.handle(opts.line if opts.line is not None else input("lo-s> ")) or opts.line is not None:
+            if not shell.handle(opts.line if opts.line is not None else read("lo-s> ")) or opts.line is not None:
                 break
         except EOFError:
             print()

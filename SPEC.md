@@ -150,6 +150,33 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   It is recorded as theirs, remembered for that line and run. The student often picks the right
   command with a wrong value, such as `home` for the home folder; this settles such a line
   without a model.
+- **Proposed.** A question that takes yes or no is answered by `y`, `yes`, `n` or `no`, and
+  Enter gives the default. Anything else may be the next line typed too soon. It is taken for
+  neither, and the question is asked again. Before, any answer that began with a y was a yes.
+- **Proposed.** At a terminal, the question about a command a model chose takes a third answer,
+  `e`. The command is put on the input line for the user to correct, and what they leave is
+  recorded and run as `means` would. Left as it was, it counts as a yes. It is offered as the
+  model gave it and not in the full form shown above the question: what the user leaves is
+  what is remembered, and the full form would write the folder they happen to be in into it.
+- **Proposed.** The lines typed at the prompt are kept in `state/history` from one session to the
+  next. Memory answers a line only when it is typed word for word, so getting the same words
+  back is what makes a line free the second time. Answers to the shell's questions are not
+  lines and are kept out.
+- **Proposed.** Tab completes what is being typed: a command, its parameters, a path where a
+  parameter names one, the shell's own words and what follows them, and a line the user has
+  settled, from the word being typed on.
+- **Proposed.** A typed line is not matched to the settled lines by likeness, with or without a
+  model. It was measured (`experiments/rewording/`): the student gives a rewording the settled
+  command and values as often as it gives them to the settled line itself, and a line with
+  another value is more like the settled line than a rewording is, so matching hands the old
+  value to the lines that changed it.
+- **Open.** A rewording of a line the user had to correct gets the student's mistake again.
+  Two uses of the record would have covered every such miss in that measurement: showing the
+  user's correction when the student gives an answer they corrected for another line, and
+  offering the most alike settled line's command when the student finds nothing. They were
+  worked out after the fact from the same answers and are not built.
+- **Open.** A path with a space in it completes once, written the way the shell reads it, and Tab
+  cannot go on inside it.
 - **Open.** A line the student finds nothing for is queued without a question, so a typing
   mistake lands in the queue too. `forget` drops it.
 
@@ -320,6 +347,8 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - An acceptance check that removes a command, and memory tied to a version of the command table.
 - A fixed split of weights, serving with the prompt cache off, a search over server settings.
 - An embedding model, or a shortlist of commands for large tables, until a measurement asks for one.
+  For matching a typed line to the settled lines, one was made (`experiments/rewording/`) and
+  it does not ask for one.
 - Anything that spends teacher calls without the user saying so.
 
 ## Built so far
@@ -409,6 +438,27 @@ improvements.
     their command. "copy the src directory to src.orig" went to `fs.move`, as it had when
     `fs.copy` was first tried, so nothing had changed.
 - Not tried on the teacher yet: what it is told about `ranges`.
+- Line editing (`los/terminal.py`): history kept in the state folder, completion with Tab, and a
+  command put on the line to correct. In the shell: `e` as an answer about a command a model
+  chose, and questions that take only a clear yes or no.
+- Tried on 2026-10-09 in a pseudo-terminal, with the student and a scratch state folder. The
+  student gave `home` for the home folder, `e` put its command on the line, and the corrected
+  command was remembered and run. Up then brought the line back and not the `e`, and memory
+  answered it. Tab completed a command, a parameter and a path. "yes but later" at a question
+  about a destructive command was asked again and not taken for a yes.
+- The owner's own trial the same day, at their prompt and with their own record, went the same
+  way, and the history was there again after leaving and starting anew. One thing it showed: a
+  Tab listing gives each path in full and not the name alone, which is wide in a deep folder.
+- Measured on 2026-10-09 on the student (`experiments/rewording/`), with the prompt cache on and
+  no teacher call: 17 lines the project owner had settled, 68 rewordings of them and 42 lines
+  with one value changed, each asked once as if new.
+  - The student gave the settled command and values to 60 of 68 rewordings and to 15 of the 17
+    settled lines themselves, and never another command. This is agreement with what the user
+    accepted.
+  - Six of the eight rewordings that missed are rewordings of the two lines where the user's
+    answer is not the student's.
+  - Taking lines that share enough character trigrams as one answers 47 of 68 rewordings at one
+    level and gives 39 of the 42 changed lines the old value.
 
 ## What the first build measured
 

@@ -227,6 +227,15 @@ class FullFormTest(ShellCase):
         self.shell(answers=["n"], commands=self.real).handle("fs.move --source draft.txt --dest ~/final.txt")
         self.assertEqual(self.shown, [f"→ fs.move --source {self.files}/draft.txt --dest ~/final.txt", "Not run."])
 
+    def test_a_command_to_correct_is_offered_as_the_model_gave_it(self):
+        # What the user leaves is what gets remembered, so the folder they happen to be in is not written into it.
+        shell = self.shell(call("fs.usage", path="docs"), answers=["e"], edits=["fs.usage --path docs --depth 2"],
+                           commands=self.real)
+        shell.handle("how big is docs")
+        self.assertEqual((self.shown[0], self.offered), (f"→ fs.usage --path {self.files}/docs",
+                                                         [("Correct it: ", "fs.usage --path docs")]))
+        self.assertEqual(state.read("cases")[-1]["answer"], {"command": "fs.usage", "args": {"path": "docs", "depth": "2"}})
+
     def test_what_is_remembered_is_what_was_said_not_where_it_pointed(self):
         shell = self.shell(call("fs.list", path="docs"), answers=[""], commands=self.real)
         shell.handle("what is in docs")
@@ -279,3 +288,65 @@ class MeansTest(ShellCase):
             shell.handle(wrong_use)
             self.assertIn(said, self.shown[-1])
         self.assertEqual((self.ran.calls, len(state.read("cases"))), ([], 1))
+
+
+class CorrectTest(ShellCase):
+    """At a terminal, the command a model chose can be corrected on the line in place of a yes or no."""
+
+    def test_the_command_is_put_on_the_line_and_what_the_user_leaves_is_remembered(self):
+        shell = self.shell(call("fs.list", path="home"), answers=["e"], edits=["fs.list --path ~ --sort-by size"])
+        shell.handle("what is in my home folder")
+        self.assertEqual(self.asked, ["Run it? [Y/n/edit] "])
+        self.assertEqual((self.shown[0], self.offered), ("→ fs.list --path home", [("Correct it: ", "fs.list --path home")]))
+        self.assertEqual(self.shown[1:], ['Remembered: "what is in my home folder" means fs.list --path ~ --sort-by size.',
+                                          "ran fs.list"])
+        self.assertEqual(self.ran.calls, [("fs.list", {"path": "~", "sort_by": "size"})])
+        self.assertEqual(recorded(), [("what is in my home folder", "fs.list", "student", "declined"),
+                                      ("what is in my home folder", "fs.list", "user", "accepted")])
+        shell.handle("what is in my home folder")
+        self.assertEqual((self.student.calls, self.shown[-2]), (1, "→ fs.list --path ~ --sort-by size  (remembered)"))
+
+    def test_a_command_left_as_it_was_counts_as_a_yes(self):
+        shell = self.shell(call("fs.list", path="docs", sort_by="size"), answers=["edit"],
+                           edits=["fs.list  --sort-by size --path docs "])
+        shell.handle("what is in docs")
+        self.assertEqual((self.ran.calls, self.shown[1:]), ([("fs.list", {"path": "docs", "sort_by": "size"})], ["ran fs.list"]))
+        self.assertEqual(recorded(), [("what is in docs", "fs.list", "student", "accepted")])
+
+    def test_what_is_left_must_be_a_command(self):
+        for left, said in ((["the pizza place"], "That is not one of the commands help lists."),
+                           ([""], "That is not one of the commands help lists."),
+                           (["fs.list --colour red"], "fs.list has no parameter --colour\n"
+                                                      "Usage: fs.list [--path VALUE] [--sort-by VALUE]"),
+                           ([], "→ fs.list")):          # the line was closed without an answer
+            shell = self.shell(call("fs.list"), answers=["e"], edits=left)
+            shell.handle("list it")
+            self.assertEqual(self.shown[-2], said)
+            self.assertTrue(self.shown[-1].startswith("Not run."))
+            self.assertEqual((self.ran.calls, recorded()[-1][2:]), ([], ("student", "declined")))
+
+    def test_a_corrected_command_that_changes_something_still_asks(self):
+        shell = self.shell(call("note.add", text="a to b"), answers=["e", "y"], edits=["fs.move --source a --dest b"])
+        shell.handle("rename a to b")
+        self.assertEqual(self.asked, ["Run it? [y/N/edit] ", "It makes changes that cannot be undone. Run it? [y/N] "])
+        self.assertEqual(self.ran.calls, [("fs.move", {"source": "a", "dest": "b"})])
+
+    def test_a_remembered_command_can_be_corrected_too(self):
+        shell = self.shell(call("note.add", text="milk"), answers=["y", "e"], edits=["note.add --text 'oat milk'"])
+        shell.handle("jot down milk")
+        shell.handle("jot down milk")
+        self.assertEqual(self.shown[-3:], ["→ note.add --text milk  (remembered)",
+                                           'Remembered: "jot down milk" means note.add --text \'oat milk\'.', "ran note.add"])
+        self.assertEqual([case[2:] for case in recorded()], [("student", "accepted"), ("memory", "declined"), ("user", "accepted")])
+
+    def test_where_no_line_can_be_edited_it_is_not_offered(self):
+        shell = self.shell(call("fs.list"), answers=["e", ""])
+        shell.handle("list it")
+        self.assertEqual(self.asked, ["Run it? [Y/n] "] * 2)
+        self.assertEqual((self.shown[1], self.ran.calls), ("Answer y or n.", [("fs.list", {})]))
+
+    def test_an_answer_that_is_none_of_them_says_what_the_answers_are(self):
+        shell = self.shell(call("fs.list"), answers=["list the other one", "n"], edits=[])
+        shell.handle("list it")
+        self.assertEqual(self.shown[1], "Answer y or n, or e to correct the command first.")
+        self.assertEqual((self.ran.calls, self.offered), ([], []))
