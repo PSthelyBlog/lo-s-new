@@ -35,6 +35,11 @@ Run it? [Y/n/edit] e
 Correct it: fs.usage --path ~
 Remembered: "what takes up the most space in my home folder" means fs.usage --path ~.
 ... the folders and their sizes ...
+lo-s> show the biggest folders in my home directory
+The student gave fs.usage --path home. You corrected that for "what takes up the most space in my home folder".
+→ fs.usage --path ~  (your correction)
+Run it? [Y/n/edit]
+... the folders and their sizes ...
 lo-s> is my machine doing ok
 → sys.health
 Run it? [Y/n/edit]
@@ -90,6 +95,11 @@ The transcript is put together from real runs and shortened, and the folder name
   yourself what a line means. Answering `e` to the question does that in one go: the command
   is put on the line for you to correct. The student often has the right command with one
   wrong value.
+- **What you settled for one line helps with the next.** When the student gives an answer you
+  corrected before, your correction is shown in its place, with the line you made it for. When
+  the student finds nothing and a settled line is much like the one you typed, that line's
+  command is offered, and only a typed yes runs it. The student is still asked first: both act
+  on its answer, and neither answers in its place.
 - **The prompt keeps your lines and completes them.** Memory answers a line only when it is typed
   word for word, so the lines you type are kept from one session to the next, and Up or Ctrl-R
   brings one back. Tab completes a command, its parameters, a path, and a line you have settled.
@@ -274,7 +284,9 @@ student agreed with a reference, not that its answers are right.
 - A settled line said in other words got the settled command and values from the student for
   60 of 68 rewordings, as often as the settled lines themselves when asked as if new. Matching
   a typed line to the settled ones by likeness is left out: a line with another value is more
-  like the settled line than a rewording is.
+  like the settled line than a rewording is. What is built acts on the student's answer
+  instead. Replaying the same answers through the shell, 67 of the 68 rewordings are shown the
+  settled command and values: 3 more as the user's own correction and 4 as an offer.
   [experiments/rewording](experiments/rewording/README.md) has the method and the counts.
 - A judgement takes 0.6 seconds, and a rule answers in 0.04.
 - The student's line moves with the wording of a question: over five wordings it found free

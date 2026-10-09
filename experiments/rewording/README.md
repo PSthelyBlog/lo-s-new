@@ -39,9 +39,13 @@ which is a reference.
 LOS_RUNTIME=/path/to/runtime scripts/serve.sh             # in another terminal
 experiments/rewording/run.py --data /path/to/lines.json ask
 experiments/rewording/run.py --data /path/to/lines.json report
+experiments/rewording/run.py --data /path/to/lines.json replay
 ```
 
-`run.py --help` gives the form of the file.
+`run.py --help` gives the form of the file. `replay` asks no model: it puts the answers on record
+through the shell as it is built now and says what the user would be shown. With
+`--needs /path/to/needs.json`, a list of lines that no command here can do, `ask` puts those to
+the student as well and `replay` says how many of them would be offered a command.
 
 ## Results, 2026-10-09 (Gemma 4 26B-A4B q4_0, llama.cpp b11146, RTX 3070 Laptop 8 GB)
 
@@ -58,7 +62,7 @@ In short:
   the settled line than a rewording is, so whatever finds the rewordings also hands the old
   value to the lines that changed it.
 - So no embedding model is added. Two cheaper uses of the record would have covered every miss
-  here; they are described at the end and are not built.
+  here. They were built afterwards, and the last section says how they fare on these answers.
 
 ### What the student gave
 
@@ -129,10 +133,53 @@ are not a test of the idea.
 - Together they cover all eight rewordings that missed and both changed lines that reached
   nothing, and touch no line the student got right.
 
+### As built, replayed on the same answers
+
+Both were then built into the shell (SPEC.md says how they behave). `run.py replay` puts the
+settled lines on record the way the shell records them, with the user's answer as a correction
+where the student's own was another, and takes each new line through the shell with the answer
+the student gave it. Every question is answered no, so no new line settles anything for the next.
+
+| What the shell shows | Lines | The right command and values | The right command, other values | Another command |
+|---|---|---|---|---|
+| The student's own answer | 100 | 99 | 1 | 0 |
+| The user's correction of that answer | 3 | 3 | 0 | 0 |
+| The command of the settled line most alike, as an offer | 6 | 4 | 2 | 0 |
+| No command: the line is queued | 1 | 0 | 0 | 0 |
+
+| | Lines | Right as the student answers | Right as the shell shows |
+|---|---|---|---|
+| The same request and values, in other words | 51 | 44 | 51 |
+| The same again, in another language | 17 | 16 | 16 |
+| The same request with another value | 42 | 39 | 39 |
+
+- **67 of the 68 rewordings are shown the settled command and values**, against 60 from the
+  student alone. Three are the user's correction, which Enter runs. Four are offers, which need
+  a typed yes.
+- **The two changed lines that reached nothing are offered the old value.** The offer names the
+  line it comes from, and answering `e` puts the command on the line to change the value.
+- **One rewording is still queued**: the one in another language whose words share too little
+  with any settled line.
+- This checks the code against the answers the two ideas came from. It is not a test of them.
+
+An offer is made when the typed line and a settled one share at least a quarter of their
+character trigrams. That level was chosen from few lines:
+
+- Of the seven new lines here that reached nothing, six are at least that much like a settled
+  line, from 0.30 to 0.83. The seventh is 0.23.
+- Against them, the owner's records hold 11 lines that asked for what no command did at the time.
+  The student now gives five of them a command, so no offer arises. Of the six it finds nothing
+  for, five are less than 0.2 like any settled line and are queued without a question, as
+  before.
+- The sixth is 0.33 like a settled line and would be offered its command, wrongly: it names the
+  same file as that line and asks for something else. Likeness is of the whole line, so a shared
+  path counts for as much as shared words.
+
 ## Caveats
 
 - One user's 17 lines, one table, one start of the server, one model.
 - The rewordings have one author, who also wrote this, so they may be easier or harder than what
   the user would type. The user's own record holds two rewordings in 92 lines.
 - Likeness was tried one way: character trigrams, the nearest settled line, one level for all.
+- The level for an offer rests on 13 lines, seven of them written for this trial.
 - The settled lines are few. With hundreds, more of them would lie near any new line.

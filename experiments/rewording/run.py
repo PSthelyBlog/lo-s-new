@@ -10,6 +10,10 @@ answer is recorded once; running again fills gaps only.
 
   run.py --data FILE ask       put every line in the file to the student
   run.py --data FILE report    the counts; with --lines, every line that went another way too
+  run.py --data FILE replay    what the shell would show for each line, from the answers on record
+
+With --needs FILE, a JSON list of lines that no command here can do, ask puts those to the
+student too, and replay says how many of them would be offered a settled line's command.
 
 FILE is a JSON list with one entry for each settled line:
 
@@ -24,13 +28,16 @@ import os
 import pathlib
 import statistics
 import sys
+import tempfile
 import tomllib
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent))
-from los import plugins, route, sandbox, state  # noqa: E402
+from los import cases, plugins, route, sandbox, state  # noqa: E402
+from los.cases import likeness  # noqa: E402    the measure lo-s has: shared character trigrams, no model in it
 from los.models import provider  # noqa: E402
 from los.parse import render  # noqa: E402
+from los.shell import Shell  # noqa: E402
 
 KINDS = {"settled": "The settled lines themselves, asked as if new",
          "reworded": "The same request and values, in other words",
@@ -57,10 +64,10 @@ def answers_of(data):
     return {row["line"]: row for row in map(json.loads, path.read_text().splitlines())} if path.exists() else {}
 
 
-def ask(model, table, data):
+def ask(model, table, data, needs):
     done = answers_of(data)
     with data.with_suffix(".answers.jsonl").open("a") as out:
-        for _, _, line, _ in lines_of(data):
+        for line in [line for _, _, line, _ in lines_of(data)] + needs:
             if line in done:
                 continue
             try:
@@ -82,17 +89,6 @@ def as_run(table, command, args):
     full = sandbox.complete(table[command], args)
     return command, {name: value if table[command].params[name].path else " ".join(value.lower().split())
                      for name, value in full.items()}
-
-
-def trigrams(text):
-    text = f"  {' '.join(text.lower().split())}  "
-    return {text[i:i + 3] for i in range(len(text) - 2)}
-
-
-def likeness(one, other):
-    """The measure lo-s already has (los/cases.py): shared character trigrams. No model in it."""
-    mine, theirs = trigrams(one), trigrams(other)
-    return len(mine & theirs) / len(mine | theirs)
 
 
 def report(table, data, show):
@@ -151,9 +147,81 @@ def report(table, data, show):
             print(f"- [{kind}] {line!r}: {went}, where {render(*right)} was right")
 
 
+class Replayed:
+    """Stands in for the student: gives each line the answer on record for it."""
+
+    model = "replayed"
+
+    def __init__(self, answers):
+        self.answers = answers
+
+    def complete(self, system, user, schema, limit=None):
+        said = self.answers[user]
+        call = {"command": said["command"], "args": said["args"]} if said["command"] else {"command": "none"}
+        return {"call": call}, {"seconds": said.get("seconds")}
+
+
+def replay(table, data, needs):
+    """What the shell would show for each new line, as it is built now, from the answers on
+    record. No model is asked. The settled lines are put on record in a scratch state folder the
+    way the shell records them: as accepted where the student's own answer is the user's, and as
+    the user's correction where it is another. Every question is answered no, so that no new line
+    settles anything for the next. `needs` are lines that no command here can do."""
+    asked, answers = list(lines_of(data)), answers_of(data)
+    new = [(kind, line, right) for kind, _, line, right in asked if kind != "settled"]
+    new += [("need", line, (None, {})) for line in needs]
+    if any(line not in answers for _, line, _ in new):
+        sys.exit("Some lines have no answer yet. Run: run.py --data FILE ask, with --needs if replay is given it")
+    shown = {}
+    with tempfile.TemporaryDirectory() as folder:
+        os.environ["LOS_STATE"] = folder
+        for kind, _, line, right in asked:
+            if kind == "settled":
+                said, theirs = answers[line], {"command": right[0], "args": right[1]}
+                same = as_run(table, said["command"], said["args"]) == as_run(table, *right)
+                cases.record("line", line, theirs if same else {"command": said["command"], "args": said["args"]}, "student",
+                             "accepted" if same else "declined" if said["command"] else "")
+                if not same:
+                    cases.record("line", line, theirs, "user", "accepted")
+        shell = Shell(table, ask=lambda question: "n", out=lambda text: None, run=None, student=Replayed(answers))
+        for kind, line, right in new:
+            shell.handle(line)
+            last = [case for case in state.read("cases") if case["question"] == line][-1]
+            shown[line] = (last["by"] if last["answer"]["command"] else None, last["answer"])
+
+    def fits(line, right):
+        """2 for the right command and values, 1 for the right command with other values, 0 otherwise."""
+        answer = shown[line][1]
+        whole = as_run(table, answer["command"], answer["args"]) == as_run(table, *right)
+        return 2 if whole else int(answer["command"] == right[0])
+
+    print("| What the shell shows | Lines | The right command and values | The right command, other values | Another command |")
+    print("|---|---|---|---|---|")
+    for source, title in (("student", "The student's own answer"), ("correction", "The user's correction of that answer"),
+                          ("likeness", "The command of the settled line most alike, as an offer"),
+                          (None, "No command: the line is queued")):
+        mine = [fits(line, right) for kind, line, right in new if kind != "need" and shown[line][0] == source]
+        print(f"| {title} | {len(mine)} | {mine.count(2)} | {mine.count(1)} | {mine.count(0) if source else 0} |")
+    print("\n| | Lines | Right as the student answers | Right as the shell shows |")
+    print("|---|---|---|---|")
+    for kind, title in KINDS.items():
+        mine = [(line, right) for one, line, right in new if one == kind]
+        if mine:
+            before = sum(as_run(table, answers[line]["command"], answers[line]["args"]) == as_run(table, *right)
+                         for line, right in mine)
+            print(f"| {title} | {len(mine)} | {before} | {sum(fits(line, right) == 2 for line, right in mine)} |")
+    wanted = [shown[line][0] for kind, line, _ in new if kind == "need"]
+    if wanted:
+        nothing = sum(answers[line]["command"] is None for kind, line, _ in new if kind == "need")
+        print(f"\nOf {len(wanted)} lines that need a new command, the student found nothing for {nothing}. Of those, "
+              f"{wanted.count('likeness')} would be offered the command of a settled line at least {cases.ALIKE} like "
+              f"it, and {wanted.count(None)} queued without a question.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("what", choices=["ask", "report"])
+    parser.add_argument("what", choices=["ask", "report", "replay"])
+    parser.add_argument("--needs", type=pathlib.Path, help="a JSON list of lines that no command here can do")
     parser.add_argument("--data", type=pathlib.Path, required=True, help="the file of settled lines and their rewordings")
     parser.add_argument("--lines", action="store_true", help="in the report, list the lines that went another way")
     parser.add_argument("--url", help="the student's server, if not the one in los.toml")
@@ -161,11 +229,14 @@ def main():
     table, problems = plugins.load(pathlib.Path(os.environ.get("LOS_PLUGINS", state.ROOT / "plugins")))
     for problem in problems:
         print(problem)
+    needs = json.loads(opts.needs.read_text()) if opts.needs else []
     if opts.what == "report":
         return report(table, opts.data, opts.lines)
+    if opts.what == "replay":
+        return replay(table, opts.data, needs)
     settings = tomllib.loads(pathlib.Path(os.environ.get("LOS_CONFIG", state.ROOT / "los.toml")).read_text())
     student = settings["providers"][settings["roles"]["student"]]
-    ask(provider({**student, "url": opts.url} if opts.url else student), table, opts.data)
+    ask(provider({**student, "url": opts.url} if opts.url else student), table, opts.data, needs)
 
 
 if __name__ == "__main__":

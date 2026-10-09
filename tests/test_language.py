@@ -350,3 +350,167 @@ class CorrectTest(ShellCase):
         shell.handle("list it")
         self.assertEqual(self.shown[1], "Answer y or n, or e to correct the command first.")
         self.assertEqual((self.ran.calls, self.offered), ([], []))
+
+
+HOME = "what is in my home folder"
+
+
+class CorrectionAgainTest(ShellCase):
+    """What the user put in place of the student's answer for one line is shown when the student
+    gives that very answer for another."""
+
+    def corrected(self, *student_says, answers=()):
+        """A shell in which the user has said once that fs.list --path home should be --path ~."""
+        shell = self.shell(call("fs.list", path="home"), *student_says, answers=["n", *answers])
+        shell.handle(HOME)
+        shell.handle("means fs.list --path ~")
+        return shell
+
+    def test_the_users_correction_is_shown_in_place_of_the_answer_they_corrected(self):
+        shell = self.corrected(call("fs.list", path="home"), answers=[""])
+        shell.handle("show me my home folder")
+        self.assertEqual(self.shown[-3:], [f'The student gave fs.list --path home. You corrected that for "{HOME}".',
+                                           "→ fs.list --path ~  (your correction)", "ran fs.list"])
+        self.assertEqual((self.asked[-1], self.ran.calls[-1]), ("Run it? [Y/n] ", ("fs.list", {"path": "~"})))
+        self.assertEqual(recorded()[-2:], [("show me my home folder", "fs.list", "student", "declined"),
+                                           ("show me my home folder", "fs.list", "correction", "accepted")])
+        said, shown = state.read("cases")[-2:]          # what the student said is kept as it was
+        self.assertEqual((said["answer"]["args"], said["seconds"]), ({"path": "home"}, 1.5))
+        self.assertEqual((shown["answer"]["args"], shown["from"]), ({"path": "~"}, HOME))
+        shell.handle("show me my home folder")          # settled now, so the student is not asked again
+        self.assertEqual((self.student.calls, self.shown[-2]), (2, "→ fs.list --path ~  (remembered)"))
+
+    def test_a_correction_made_on_the_line_counts_and_another_answer_is_left_as_it_is(self):
+        shell = self.shell(call("fs.list", path="home"), call("fs.list", path="home"), call("fs.list", path="house"),
+                           answers=["e", "n", "n"], edits=["fs.list --path ~"])
+        shell.handle(HOME)
+        shell.handle("show me my home folder")
+        self.assertEqual((self.shown[-2], self.asked[-1]), ("→ fs.list --path ~  (your correction)", "Run it? [Y/n/edit] "))
+        shell.handle("what is in my house folder")
+        self.assertEqual((self.shown[-2], recorded()[-1][2:]), ("→ fs.list --path house", ("student", "declined")))
+
+    def test_an_answer_that_was_right_as_it_stands_for_a_line_is_shown_as_the_student_gave_it(self):
+        shell = self.shell(*[call("fs.list", path="home")] * 3, answers=["", "n", "n"])
+        shell.handle("what is in the folder called home")       # here home is a folder's name, and the user agrees
+        shell.handle(HOME)
+        shell.handle("means fs.list --path ~")
+        shell.handle("show me my home folder")                  # so the answer may be right, and nothing is put in its place
+        self.assertEqual((self.shown[-2], recorded()[-1][2:]), ("→ fs.list --path home", ("student", "declined")))
+
+    def test_putting_the_students_answer_back_says_it_was_right_as_it_stands(self):
+        shell = self.shell(*[call("fs.list", path="home")] * 3, answers=["e", "e", "n"],
+                           edits=["fs.list --path ~", "fs.list --path home"])
+        shell.handle(HOME)
+        shell.handle("what is in the folder called home")       # the correction is shown, and it is wrong here
+        self.assertEqual(self.offered[-1], ("Correct it: ", "fs.list --path ~"))
+        self.assertEqual(self.shown[-2], 'Remembered: "what is in the folder called home" means fs.list --path home.')
+        shell.handle("show me my home folder")
+        self.assertEqual(self.shown[-2], "→ fs.list --path home")
+
+    def test_a_correction_taken_back_is_not_shown_again(self):
+        shell = self.corrected(*[call("fs.list", path="home")] * 3, answers=["", "n", "n", "n", "n"])
+        shell.handle("show me my home folder")                  # the correction is shown, and Enter runs it
+        shell.handle("wrong")                                   # which was wrong for this line
+        shell.handle("show me my home folder")
+        self.assertEqual(self.shown[-2], "→ fs.list --path home")
+        shell.handle(HOME)                                      # remembered, so it is the latest choice
+        shell.handle("wrong")                                   # and with it goes the correction itself
+        shell.handle("what do I keep in my home folder")
+        self.assertEqual(self.shown[-2], "→ fs.list --path home")
+
+    def test_of_two_corrections_of_one_answer_the_one_for_the_line_most_alike_is_shown(self):
+        shell = self.corrected(*[call("fs.list", path="home")] * 3, answers=["n", "n", "n"])
+        shell.handle("what are the biggest things at home")
+        shell.handle("means fs.list --path ~ --sort-by size")
+        shell.handle("biggest things at my home")
+        self.assertEqual(self.shown[-3:-1], ['The student gave fs.list --path home. You corrected that for '
+                                             '"what are the biggest things at home".',
+                                             "→ fs.list --path ~ --sort-by size  (your correction)"])
+        shell.handle("what do I keep in my home folder")
+        self.assertEqual(self.shown[-2], "→ fs.list --path ~  (your correction)")
+
+    def test_a_correction_gets_the_care_any_choice_gets(self):
+        shell = self.shell(*[call("note.add", text="milk")] * 3, answers=["n", "", "e"], edits=["note.add --text 'soy milk'"])
+        shell.handle("jot down milk")
+        shell.handle("means note.add --text 'oat milk'")
+        shell.handle("note down milk please")                   # it adds something, so Enter does not run it
+        self.assertEqual((self.asked[-1], self.shown[-2]),
+                         ("Run it? [y/N/edit] ", "→ note.add --text 'oat milk'  (your correction)"))
+        self.assertTrue(self.shown[-1].startswith("Not run."))
+        self.assertEqual(recorded()[-2:], [("note down milk please", "note.add", "student", "declined"),
+                                           ("note down milk please", "note.add", "correction", "declined")])
+        shell.handle("note down milk please")                   # nothing was settled, and it can be corrected in turn
+        self.assertEqual(self.offered, [("Correct it: ", "note.add --text 'oat milk'")])
+        self.assertEqual(self.shown[-2:], ['Remembered: "note down milk please" means note.add --text \'soy milk\'.',
+                                           "ran note.add"])
+
+    def test_stats_count_what_was_offered_from_another_line(self):
+        shell = self.corrected(call("fs.list", path="home"), NONE, answers=["", ""])
+        for line in ("show me my home folder", "whats in my home folder", "stats"):
+            shell.handle(line)
+        self.assertIn("Answered by the student: 3, taking 4.5 s (0 accepted, 2 declined, 1 where nothing fitted)\n"
+                      "Offered from another line of yours: 2 (1 as your correction of the student's answer, 1 where it "
+                      "found nothing; 1 accepted)\nSettled by you with means: 1\n", self.shown[-1])
+
+
+class AlikeTest(ShellCase):
+    """A line the student finds no command for is offered the command of the settled line most like it."""
+
+    def settled(self, *student_says, answers=()):
+        """A shell in which the user has accepted fs.list --path ~ for one line."""
+        shell = self.shell(call("fs.list", path="~"), *student_says, answers=["", *answers])
+        shell.handle(HOME)
+        return shell
+
+    def test_the_command_of_the_line_most_alike_is_offered_and_needs_a_clear_yes(self):
+        shell = self.settled(NONE, answers=["y"])
+        shell.handle("whats in my home folder")
+        self.assertEqual(self.shown[-3:], [f'The student found no command for that. It is most like your line "{HOME}".',
+                                           "→ fs.list --path ~  (what that line means)", "ran fs.list"])
+        self.assertEqual(self.asked[-1], "Run it? [y/N] ")      # though it only reads
+        self.assertEqual(recorded()[-2:], [("whats in my home folder", None, "student", ""),
+                                           ("whats in my home folder", "fs.list", "likeness", "accepted")])
+        self.assertEqual(state.read("cases")[-1]["from"], HOME)
+        shell.handle("whats in my home folder")
+        self.assertEqual((self.student.calls, self.shown[-2]), (2, "→ fs.list --path ~  (remembered)"))
+
+    def test_saying_no_queues_the_line_as_before(self):
+        shell = self.settled(NONE, answers=[""])
+        shell.handle("whats in my home folder")
+        self.assertEqual(self.shown[-1], "Nothing here does that yet. It is queued as need 1. needs lists the queue, "
+                                         "and forget 1 drops it.")
+        self.assertEqual((len(self.ran.calls), recorded()[-1][2:]), (1, ("likeness", "declined")))
+        self.assertEqual([need["line"] for need in cases.waiting().values()], ["whats in my home folder"])
+
+    def test_a_line_unlike_any_settled_is_queued_without_a_question(self):
+        shell = self.settled(NONE)
+        shell.handle("order a large pizza")
+        self.assertEqual((len(self.asked), self.shown[-1][:28]), (1, "Nothing here does that yet. "))
+        self.assertEqual(recorded()[-1], ("order a large pizza", None, "student", ""))
+
+    def test_its_values_can_be_corrected_on_the_line(self):
+        shell = self.shell(NONE, call("fs.list", path="~"), NONE, answers=["", "e"], edits=["fs.list --path ~/docs"])
+        shell.handle("what is in my docs folder")               # nothing is settled yet, so it is need 1
+        shell.handle(HOME)
+        shell.handle("what is in my docs folder")
+        self.assertEqual((self.asked[-1], self.offered), ("Run it? [y/N/edit] ", [("Correct it: ", "fs.list --path ~")]))
+        self.assertEqual(self.shown[-3:], ['Remembered: "what is in my docs folder" means fs.list --path ~/docs.',
+                                           "That answers need 1, so it left the queue.", "ran fs.list"])
+        self.assertEqual(cases.waiting(), {})
+
+    def test_a_need_that_gets_its_answer_leaves_the_queue(self):
+        shell = self.shell(NONE, call("fs.list", path="~"), NONE, NONE, call("fs.list"), answers=["", "y", ""])
+        for line in ("whats in my home folder", HOME, "whats in my home folder"):
+            shell.handle(line)
+        self.assertEqual(self.shown[-2:], ["ran fs.list", "That answers need 1, so it left the queue."])
+        shell.handle("list it")                                 # the same holds when the student finds the command later
+        shell.handle("list it")
+        self.assertEqual(self.shown[-2:], ["ran fs.list", "That answers need 2, so it left the queue."])
+        self.assertEqual(cases.waiting(), {})
+
+    def test_an_offer_taken_back_is_not_made_again(self):
+        shell = self.settled(NONE, NONE, answers=["y", "n"])
+        shell.handle("whats in my home folder")
+        shell.handle("wrong")
+        shell.handle("whats in my home folder")
+        self.assertEqual((len(self.asked), self.shown[-1][:28]), (3, "Nothing here does that yet. "))

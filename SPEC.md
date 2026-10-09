@@ -124,9 +124,11 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   4. The student is asked, with its answer limited to one command and that command's
      parameters, or none. The typed form is shown. Enter accepts a read command; anything else
      needs an explicit yes. Accepting records a confirmed case. Declining settles nothing,
-     because the choice may be right and simply unwanted.
-  5. Nothing fits: the line is queued as a need. A need keeps its number for good, and a line
-     that is waiting already is not queued a second time.
+     because the choice may be right and simply unwanted. When its answer is one the user
+     corrected for another line, their correction is shown in its place.
+  5. The student finds nothing. When a settled line is alike enough, its command is offered.
+     Otherwise, or when the user says no, the line is queued as a need. A need keeps its number
+     for good, and a line that is waiting already is not queued a second time.
 - **Proposed.** What is shown before a question is the command in full: a path left out is filled
   in, and every path is absolute, with the home folder written as `~`. That line is what will
   run and all that the command can touch. What is remembered is what was said, so a relative
@@ -137,8 +139,8 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   answer is shown as one they said was wrong, and Enter no longer runs it. A yes still does,
   and settles the line. Another answer to that line, or the same answer to another line, is
   treated as new.
-- **Proposed.** `stats` counts the lines memory answered and the lines the student answered, and
-  the model time memory saved.
+- **Proposed.** `stats` counts the lines memory answered and the lines the student answered, the
+  model time memory saved, and what was offered from another line and how often it was taken.
 - **Proposed.** When a command is installed, remembered lines stay where they are. The ones
   closest to the new command are asked of the student again, as a suggestion only, and the user
   chooses whether to move one.
@@ -170,15 +172,37 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   command and values as often as it gives them to the settled line itself, and a line with
   another value is more like the settled line than a rewording is, so matching hands the old
   value to the lines that changed it.
-- **Open.** A rewording of a line the user had to correct gets the student's mistake again.
-  Two uses of the record would have covered every such miss in that measurement: showing the
-  user's correction when the student gives an answer they corrected for another line, and
-  offering the most alike settled line's command when the student finds nothing. They were
-  worked out after the fact from the same answers and are not built.
+- **Proposed.** What the user settled for one line is put to use for another in two places. In
+  both the student is asked first, and what it said is recorded as it was.
+  - **A correction.** When the student gives the very command and values the user replaced for
+    another line, with `means` or `e`, what they put in its place is shown, marked as their
+    correction, with the line they made it for. It gets the care any choice gets: Enter runs it
+    if it only reads. It is not shown once the user has accepted the student's answer as it
+    stands for some line, since it may be right again, nor for a line they took it back for,
+    and it goes when the corrected line is taken back. Of two corrections of one answer, the
+    one made for the line most like the typed one is shown.
+  - **An offer.** When the student finds nothing and a settled line shares at least a quarter of
+    its character trigrams with the typed one, that line's command is offered. Only a typed yes
+    runs it, whatever it does, and `e` puts it on the line so that a value can be changed. On a
+    no the line is queued as before. An offer taken back with `wrong` is not made for that line
+    again.
+  - Each is a case of its own, by `correction` or `likeness`, with the line it came from, and
+    `stats` counts them.
+  - Neither matches a typed line to a settled one in place of the student, which was measured
+    and left out. The first acts on what the student answered. The second acts only where the
+    student has nothing, so the choice is between an offer and none.
+- **Proposed.** A need leaves the queue when its line gets an answer, whoever gave it. Before,
+  only `means` and `delegate` took it out.
+- **Open.** A correction is of a whole answer. The same wrong value in another command, or beside
+  another value, is not recognised: `home` corrected in `fs.usage` says nothing about `fs.list`.
+- **Open.** The level for an offer comes from 13 lines. Likeness is of the whole line, so a line
+  that names the same file as a settled one and asks for something else is offered that line's
+  command. One of the six need lines tried was. With many settled lines, more of them will lie
+  near any new line.
 - **Open.** A path with a space in it completes once, written the way the shell reads it, and Tab
   cannot go on inside it.
-- **Open.** A line the student finds nothing for is queued without a question, so a typing
-  mistake lands in the queue too. `forget` drops it.
+- **Open.** A line the student finds nothing for and that is like no settled line is queued
+  without a question, so a typing mistake lands in the queue too. `forget` drops it.
 
 ## The teacher step
 
@@ -459,6 +483,31 @@ improvements.
     answer is not the student's.
   - Taking lines that share enough character trigrams as one answers 47 of 68 rewordings at one
     level and gives 39 of the 42 changed lines the old value.
+- The two uses of the record (`corrected` and `alike` in `los/cases.py`, and the shell's handling
+  of the student's answer): the user's correction shown when the student gives an answer they
+  corrected before, and the command of the most alike settled line offered when it finds
+  nothing. A need now leaves the queue when its line is answered.
+- Replayed on 2026-10-09 (`experiments/rewording/run.py replay`): the measurement's answers put
+  through the shell as built, with no model asked.
+  - 67 of the 68 rewordings are shown the settled command and values, against 60 from the
+    student alone: 3 as the user's correction and 4 as an offer. The two changed lines that
+    reached nothing are offered the old value, and one rewording in another language is still
+    queued.
+  - Both uses were worked out from these same answers, so this checks the code and is not a test
+    of the idea.
+  - Of 11 lines in the owner's records that asked for what no command did at the time, the
+    student finds nothing for 6. Five of those are queued without a question, as before. One
+    would be offered the command of a line that names the same file.
+- Tried on 2026-10-09 in a pseudo-terminal, with the student, a scratch state folder and a scratch
+  home folder. Two rewordings of a corrected line got `home` from the student again and were
+  shown the correction. A question in French that the student found nothing for was settled
+  with `means`; two rewordings of it were then offered its command, one taken and one declined
+  and queued. "order a large pizza" was queued without a question.
+- The owner's own trial the same day, at their prompt and with their own record. A rewording of
+  a corrected line got `home` again and was shown the correction, named for the more alike of
+  the two lines the record holds that correction for (0.45 against 0.25). A French rewording
+  the student found nothing for was offered the command of their settled line, which is 0.30
+  like it: little above the level, and the settled line has a typing mistake in it.
 
 ## What the first build measured
 

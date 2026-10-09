@@ -9,7 +9,10 @@ holds is kept for what can be built from it later. There are two kinds of questi
     question    the line
     answer      {"command": NAME or null, "args": {...}}
     by          student or teacher, memory when an accepted case answered, or user for what the
-                user said themselves: a choice taken back, or what a line means
+                user said themselves: a choice taken back, or what a line means. Two more take
+                their answer from what the user settled for another line, named in `from`:
+                correction, what the user put in place of the very answer the student gave, and
+                likeness, the command of the line most like one the student found nothing for
     verdict     accepted, declined (it may be right and was not wanted), wrong, or empty
 
     kind        judgement: what a named judgement inside a command comes to for one value
@@ -23,6 +26,11 @@ holds is kept for what can be built from it later. There are two kinds of questi
 import datetime
 
 from . import state
+
+# How alike a line must be to a settled one for that line's command to be offered. Of the few
+# lines tried (experiments/rewording/), six of the seven that a settled line could answer were
+# above it, and five of the six that needed a new command were below.
+ALIKE = 0.25
 
 
 def record(kind, question, answer, by, verdict="", **more):
@@ -92,14 +100,51 @@ def _trigrams(text):
     return {text[i:i + 3] for i in range(len(text) - 2)}
 
 
-def nearest(lines, to, count=3):
-    """The lines that share the most character trigrams with any of the lines in `to`, nearest
-    first. A plain measure of likeness, with no model in it."""
-    def likeness(line):
-        mine = _trigrams(line)
-        return max((len(mine & _trigrams(other)) / len(mine | _trigrams(other)) for other in to), default=0)
+def likeness(one, other):
+    """How alike two lines are, from 0 to 1: the share of their character trigrams that both
+    have. A plain measure, with no model in it."""
+    mine, theirs = _trigrams(one), _trigrams(other)
+    return len(mine & theirs) / len(mine | theirs)
 
-    return sorted(lines, key=lambda line: -likeness(line))[:count]
+
+def nearest(lines, to, count=3):
+    """The lines most like any of the lines in `to`, nearest first."""
+    return sorted(lines, key=lambda line: -max((likeness(line, other) for other in to), default=0))[:count]
+
+
+def corrected(line, answer, table):
+    """What the user put in place of this very answer when a model gave it for another line: the
+    case in which they said what that line means. A student that gives a wrong value for one
+    wording gives it for the next, and the user's correction is likely to be right there too.
+
+    Nothing is returned when the user accepted the answer as it stands for some line, or took
+    the correction back for this one. A correction counts for as long as its line is settled that
+    way. Of several, it is the one made for the line most like this one."""
+    standing, given, found = settled(table), {}, {}
+    for case in state.read("cases"):
+        if case["kind"] == "line" and case["by"] in ("student", "teacher"):
+            given[case["question"]] = case["answer"]
+        elif case["kind"] == "line" and (case["by"], case["verdict"]) == ("user", "accepted") \
+                and given.get(case["question"]) == answer != case["answer"]:
+            found[case["question"]] = case
+    if any(case["answer"] == answer for case in standing.values()):
+        return None
+    found = [case for other, case in found.items() if standing.get(other, {}).get("answer") == case["answer"]
+             and not taken_back(line, case["answer"])]
+    return max(found, key=lambda case: likeness(line, case["question"]), default=None)
+
+
+def alike(line, table):
+    """The case that settled the line most like this one, when the two are at least ALIKE. It is
+    for a line the student finds no command for: nothing else is on offer then, so that line's
+    command is worth showing. An answer the user took back for this line is passed over."""
+    lines = settled(table)
+    for other in sorted(lines, key=lambda other: -likeness(line, other)):
+        if likeness(line, other) < ALIKE:
+            break
+        if not taken_back(line, lines[other]["answer"]):
+            return lines[other]
+    return None
 
 
 def queue(line, by):

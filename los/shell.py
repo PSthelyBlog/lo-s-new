@@ -7,8 +7,10 @@ A typed line is handled in this order, and the first that applies ends it:
 3. The user accepted a command for this exact line before. That command is shown as remembered,
    and no model is asked.
 4. The student is asked which command the line means. Its choice is shown in typed form and runs
-   only if the user agrees.
-5. Nothing fits, and the line is queued as a need.
+   only if the user agrees. When it is an answer the user corrected for another line, their
+   correction is shown in its place.
+5. The student finds nothing. If a settled line is much like this one, its command is offered.
+   Otherwise, or if the user says no, the line is queued as a need.
 
 Whatever is shown before a question is the command in full: defaults filled in and every path
 absolute. That line is what will run and all that the command can touch.
@@ -136,11 +138,13 @@ class Shell:
 
     def interpret(self, line):
         """Plain language. A line the user settled before is answered from memory; otherwise the
-        student is asked. Either way the choice is shown as a typed command before anything runs."""
+        student is asked. What the user settled for other lines is put to use in two places: where
+        the student gives an answer they corrected before, and where it finds nothing. Whatever
+        the choice, it is shown as a typed command before anything runs."""
         self.said, doubted = line, False
         case = cases.remembered(line, self.table)
         if case:
-            answer = case["answer"]
+            answer, source = case["answer"], "memory"
             command, args = self.table[answer["command"]], answer["args"]
             self.out("→ " + self.typed(command, args) + "  (remembered)")
             # The user agreed to this before, so reading runs at once. Changing anything still asks.
@@ -162,25 +166,42 @@ class Shell:
                 self.out(f"The student's answer could not be used: {error}")
                 return
             asked = {"model": self.student.model, "seconds": choice.meta.get("seconds")}
-            if choice.command is None:
-                cases.record("line", line, {"command": None, "args": {}}, "student", **asked)
+            answer, source, mark = {"command": choice.command, "args": choice.args}, "student", ""
+            other = cases.corrected(line, answer, self.table) if choice.command else cases.alike(line, self.table)
+            if other:
+                # What the student said is recorded as it was, and what is shown comes from the
+                # line the user settled. It is theirs, so it is the better guess, and still a guess.
+                cases.record("line", line, answer, "student", "declined" if choice.command else "", **asked)
+                if choice.command:
+                    self.out(f"The student gave {render(choice.command, choice.args)}. You corrected that for "
+                             f"\"{other['question']}\".")
+                    source, mark = "correction", "  (your correction)"
+                else:
+                    self.out(f"The student found no command for that. It is most like your line \"{other['question']}\".")
+                    source, mark = "likeness", "  (what that line means)"
+                answer, asked = other["answer"], {"from": other["question"]}
+            elif not choice.command:
+                cases.record("line", line, answer, "student", **asked)
                 self.queue(line, "student")
                 return
-            answer = {"command": choice.command, "args": choice.args}
-            command, args = self.table[choice.command], choice.args
+            command, args = self.table[answer["command"]], answer["args"]
             # The student gives the same answer to the same line, so what the user said about it
-            # last time still holds: it is shown as doubted and Enter no longer runs it.
+            # last time still holds: it is shown as doubted and Enter no longer runs it. Nor does
+            # Enter run a command that is only that of a line alike.
             doubted = cases.taken_back(line, answer)
-            self.out("→ " + self.typed(command, args) + ("  (you said this was wrong)" if doubted else ""))
-            choice = self.agree(command, args, doubted)
+            self.out("→ " + self.typed(command, args) + ("  (you said this was wrong)" if doubted else mark))
+            choice = self.agree(command, args, doubted or source == "likeness")
             # Accepting settles the line. Declining does not: the choice may be right and simply
             # unwanted just now.
-            cases.record("line", line, answer, "student", "accepted" if choice is True else "declined", **asked)
+            cases.record("line", line, answer, source, "accepted" if choice is True else "declined", **asked)
         self.last = (line, answer)
         if choice is True:
             self.run(command, args)
+            self.answered(line)
         elif choice:        # the user corrected it, which is them saying what the line means
             self.settle(*choice)
+        elif source == "likeness":      # nothing else was on offer, so the line waits as a need
+            self.queue(line, "student")
         elif doubted:
             self.out("Not run. " + FITS)
         else:
@@ -439,6 +460,7 @@ class Shell:
         lines = [case for case in state.read("cases") if case["kind"] == "line"]
         by = {source: [case for case in lines if case["by"] == source] for source in ("memory", "student", "teacher", "user")}
         told = {verdict: sum(case["verdict"] == verdict for case in by["student"]) for verdict in ("accepted", "declined", "")}
+        lent = [case for case in lines if case["by"] in ("correction", "likeness")]
         took = [case["seconds"] for case in by["student"] if case.get("seconds")]
         # What memory saved is counted at the student's usual time for a line. The time a line
         # took when it was first asked may include working out the whole table.
@@ -455,7 +477,10 @@ class Shell:
         self.out(f"Plain-language lines: {len(by['memory']) + len(by['student'])}\n"
                  f"Answered from memory: {len(by['memory'])}, saving about {len(by['memory']) * usual:.1f} s of model time\n"
                  f"Answered by the student: {len(by['student'])}, taking {sum(took):.1f} s "
-                 f"({told['accepted']} accepted, {told['declined']} declined, {told['']} where nothing fitted)\n"
+                 f"({told['accepted']} accepted, {told['declined']} declined, {told['']} where nothing fitted)\n" +
+                 (f"Offered from another line of yours: {len(lent)} ({sum(case['by'] == 'correction' for case in lent)} "
+                  f"as your correction of the student's answer, {sum(case['by'] == 'likeness' for case in lent)} where "
+                  f"it found nothing; {sum(case['verdict'] == 'accepted' for case in lent)} accepted)\n" if lent else "") +
                  f"Settled by you with means: {sum(case['verdict'] == 'accepted' for case in by['user'])}\n"
                  f"Taken back with wrong: {sum(case['verdict'] == 'wrong' for case in by['user'])}\n" +
                  (f"Judgements inside commands: {sum(map(len, made.values()))} ({len(made['memory'])} from the record "
