@@ -433,11 +433,45 @@ class TraceTest(Folders):
         self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 84 °C and every value below it as fine "
                                          "from now on.")
         shell.handle("trace sys.health temperature")
-        self.assertTrue(self.shown[-1].startswith(
-            "On record for temperature in sys.health, 7 answers, 7 of them set by you:\n  40 to 84 °C: fine\n"
-            "  85 to 100 °C: worrying\nYou set: up to 84 °C is fine; from 85 °C is worrying.\nTo set one yourself: "))
+        self.assertTrue(self.shown[-1].startswith(      # five values came up, and two lines do not make them seven
+            "On record for temperature in sys.health, 5 answers, 5 of them set by you:\n  40 to 80 °C: fine\n"
+            "  90 to 100 °C: worrying\nYou set: up to 84 °C is fine; from 85 °C is worrying.\nTo set one yourself: "))
         self.assertEqual([cases.judged({**cases.judgements()[0]["question"], "value": value})["answer"]
                           for value in ("12 °C", "84 °C", "85 °C", "300 °C")], ["fine", "fine", "worrying", "worrying"])
+
+    def test_only_values_that_came_up_are_counted_and_one_a_stretch_alone_answered_is_left_without(self):
+        shell = self.shell()
+        for degrees in (40, 60, 80):
+            self.judged("run 1", "temperature", f"{degrees} °C", "fine", "student")
+        shell.handle("trace sys.health temperature from 75 °C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 75 °C and every value above it as worrying "
+                                         "from now on.\n1 answer on record changes with it: 80 °C.")
+        self.judged("run 2", "temperature", "95 °C", "worrying", "memory", source="user")   # met once the stretch was set
+        shell.handle("trace sys.health temperature 70 °C is worrying")                      # set by itself
+        shell.handle("trace sys.health temperature 90 °C is worrying")
+        shell.handle("trace sys.health temperature forget 90 °C")       # it never came up, and the stretch answers there
+        shell.handle("trace sys.health temperature")
+        self.assertTrue(self.shown[-1].startswith(
+            "On record for temperature in sys.health, 5 answers, 3 of them set by you:\n  40 to 60 °C: fine\n"
+            "  70 to 95 °C: worrying\nYou set: from 75 °C is worrying.\nTo set one yourself: "))
+        shell.handle("trace sys.health temperature forget from 75 °C")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 75 °C and every value above it in "
+                                         "sys.health, which was worrying.\n1 answer on record changes with it: 80 °C to "
+                                         "fine.\n95 °C has no answer on record now. sys.health asks the student when it "
+                                         "next meets it.")
+        shell.handle("trace sys.health temperature")
+        self.assertTrue(self.shown[-1].startswith("On record for temperature in sys.health, 4 answers, 1 of them set by "
+                                                  "you:\n  40 to 60 °C: fine\n  70 °C: worrying\n  80 °C: fine\n"))
+        shell.handle("trace sys.health temperature from 75 °C is worrying")
+        self.assertEqual(self.shown[-1], "Set: sys.health takes temperature of 75 °C and every value above it as worrying "
+                                         "from now on.\n1 answer on record changes with it: 80 °C.\n95 °C has an answer on "
+                                         "record again.")
+        self.judged("run 3", "temperature", "99 °C", "worrying", "memory", source="user")
+        rules.install("sys.health", "temperature", "Is this temperature fine or worrying?", LEVELS,
+                      "def rule(value):\n    return None\n", Scripted(), 4)
+        shell.handle("trace sys.health temperature forget from 75 °C")
+        self.assertTrue(self.shown[-1].endswith("\n95 °C and 99 °C have no answer on record now. sys.health asks its rule "
+                                                "when it next meets them, and the student if the rule has no answer."))
 
     def test_a_stretch_says_what_it_changes_and_what_it_leaves_alone(self):
         shell = self.shell()

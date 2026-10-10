@@ -75,7 +75,10 @@ def judgements(table):
             start = (f"{command.name} has asked the student about {name} {count(len(asked), 'time')}, "
                      f"{_took(asked):.1f} s in all.")
             if asked and not missing:
-                found.append(Found(f"{start} {known} answers are on record, enough for a rule to answer in its place.",
+                more = rules.beyond(command.name, name)
+                found.append(Found(f"{start} {known} answers are on record, " +
+                                   (f"and {more} more where what you set starts or stops, " if more else "") +
+                                   "enough for a rule to answer in its place.",
                                    typed, "one call to the teacher", seconds=_took(asked)))
             elif len(asked) >= OFTEN and name in command.ranges:
                 found.append(Found(f"{start} A rule could answer in its place, but {missing}. {typed} first puts "

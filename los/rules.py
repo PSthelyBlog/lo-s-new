@@ -72,25 +72,27 @@ def _natural(text):
     return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", text)]
 
 
-def answers(command, name):
+def answers(command, name, edges=False):
     """What is on record for one judgement: (the question, the allowed answers, one (value, answer,
     who gave it) per value, in the order of the values), or nothing when no answer is on record.
-    The answer for a value is the one the user set, for that value or for a stretch it lies in,
-    and otherwise what the student said. What the user took back is as if never set. Only cases
-    asked the way the command asks now count: under another question they would be answers to
-    something else.
+    The values are those that came up: what the student was asked, what a run met and had
+    answered from the record, and what the user set an answer for by itself. The answer for a
+    value is the one the user set, for that value or for a stretch it lies in, and otherwise what
+    the student said. What the user took back is as if never set. Only cases asked the way the
+    command asks now count: under another question they would be answers to something else.
 
-    Where the user set a stretch, the value it starts at is listed, and the value next to it on
-    the other side when the user settled that one too. Those two are what shows a rule exactly
-    where the answer changes."""
-    asked = [case for case in cases.judgements(command, name) if case["by"] in ("user", "student")]
+    With `edges`, as for a rule, the value each stretch of the user's starts at is listed as
+    well, and the value next to it on the other side when the user settled that one too. Those
+    two are what shows a rule exactly where the answer changes."""
+    asked = [case for case in cases.judgements(command, name) if case["by"] in ("user", "student", "memory")]
     if not asked:
         return None
     same = {key: asked[-1]["question"][key] for key in ("command", "name", "ask", "choices")}
     values = [case["question"]["value"] for case in asked
-              if not case.get("reach") and cases.same_question(same, case["question"])]
-    for stretch in cases.stretches(same, asked):
-        values += [stretch["question"]["value"], beside(stretch)]
+              if case["by"] != "user" and cases.same_question(same, case["question"])] + list(cases.own(same, asked)[0])
+    if edges:
+        for stretch in cases.stretches(same, asked):
+            values += [stretch["question"]["value"], beside(stretch)]
     found = {}
     for value in values:
         known = cases.judged({**same, "value": value}, asked)
@@ -99,6 +101,13 @@ def answers(command, name):
     if not found:       # the user took back all there was
         return None
     return same["ask"], same["choices"], sorted(found.values(), key=lambda one: _natural(one[0]))
+
+
+def beyond(command, name):
+    """How many values a rule for a judgement is shown that never came up: those at which a
+    stretch the user set starts or stops."""
+    with_edges, plain = answers(command, name, edges=True), answers(command, name)
+    return len(with_edges[2]) - len(plain[2]) if with_edges and plain else 0
 
 
 def beside(stretch):
@@ -111,8 +120,9 @@ def beside(stretch):
 
 
 def recorded(command, name):
-    """The same, when it is enough to make a rule from. Otherwise Unsuitable says what is missing."""
-    found = answers(command, name)
+    """What a rule is made from, when it is enough: what is on record, and where the user's
+    stretches start and stop. Otherwise Unsuitable says what is missing."""
+    found = answers(command, name, edges=True)
     if not found:
         raise Unsuitable("nothing is on record for it yet")
     listed = found[2]

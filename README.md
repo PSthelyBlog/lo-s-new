@@ -169,7 +169,7 @@ wants to put to it.
 | `delegate WORDS`, `delegate NUMBER` | Asks the teacher about what you want, or about a queued need. |
 | `trace` | Shows the judgements of the latest run and where each answer came from. |
 | `trace NUMBER ANSWER` | Sets one of them yourself. Yours comes first from then on. |
-| `trace COMMAND NAME` | Shows every answer on record for one judgement. |
+| `trace COMMAND NAME` | Shows every answer on record for one judgement, and the stretches you set. |
 | `trace COMMAND NAME VALUE is ANSWER` | Sets the answer for any value. |
 | `trace COMMAND NAME from VALUE is ANSWER` | Sets it for that value and every one above it; `up to`, below it. |
 | `trace forget NUMBER`, `trace COMMAND NAME forget VALUE` | Takes back what you set, and with `from VALUE` or `up to VALUE` what you set for a stretch. |
@@ -256,7 +256,8 @@ lo-s runs commands on your real machine.
   - by `delegate`: your words, the command table, which models your machine is set up with and
     how they are reached, and one starter plugin as an example. When you send a proposal back,
     also what went wrong with it.
-  - by `rule`: the command's name and description, the question, and the answers on record.
+  - by `rule`: the command's name and description, the question, the answers on record, and the
+    values at which stretches you set start and stop.
   - by a command that asks the teacher: its question, which you are shown before every call.
 - Local models make mistakes. In the trials the student sent "copy the src directory to
   src.orig" to `fs.move`. Read the line before you agree to it.

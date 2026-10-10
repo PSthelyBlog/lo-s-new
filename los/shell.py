@@ -664,13 +664,17 @@ class Shell:
             # A stretch changes answers that are on record already. Say which, and what it leaves alone.
             record, this = cases.judgements(command.name, name), {"question": {"value": value}, "reach": reach}
             now = {known: said for known, said, _ in rules.answers(command.name, name)[2]}
-            changed = [known for known, said, _ in listed if now[known] != said]
+            before = {known: said for known, said, _ in listed}
+            changed = [known for known, said in before.items() if now[known] != said]
+            again = [known for known in now if known not in before]     # a run met them, and what answered was taken back
             kept = [f"{known} is {said}" for known, said, who in listed
                     if who == "user" and said != answer and cases.within(known, [this])
                     and not cases.judged({**asked, "value": known}, record).get("reach")]
             if changed:
                 told += (f"\n{count(len(changed), 'answer')} on record {'changes' if len(changed) == 1 else 'change'} "
                          f"with it: {several(changed)}.")
+            if again:
+                told += f"\n{several(again)} {'has' if len(again) == 1 else 'have'} an answer on record again."
             if kept:
                 told += f"\nWhat you set for a single value stays as it is: {several(kept)}."
         self.out(told + ("" if any(shape(known) == shape(value) for known, _, _ in listed) else
@@ -707,10 +711,15 @@ class Shell:
             for known, answer in before.items():
                 if now.get(known, answer) != answer:
                     changed.setdefault(now[known], []).append(known)
-            total = sum(map(len, changed.values()))
+            total, left = sum(map(len, changed.values())), [known for known in before if known not in now]
             if total:
                 told += (f"\n{count(total, 'answer')} on record {'changes' if total == 1 else 'change'} with it: " +
                          "; ".join(f"{several(values)} to {answer}" for answer, values in changed.items()) + ".")
+            if left:    # a run met them when only this stretch had an answer
+                ruled = (command, name) in rules.installed()
+                told += (f"\n{several(left)} {'has' if len(left) == 1 else 'have'} no answer on record now. {command} asks "
+                         f"{'its rule' if ruled else 'the student'} when it next meets {'it' if len(left) == 1 else 'them'}" +
+                         (", and the student if the rule has no answer." if ruled else "."))
         else:
             now = cases.judged(this["question"])
             answer = now["answer"] if now else rules.answer(this["question"])
@@ -771,7 +780,10 @@ class Shell:
             except rules.Unsuitable as reason:
                 self.out(f"Still no rule for {name} in {command.name}: {reason}.")
                 return
-        self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}:\n" + "\n".join(rules.summary(listed)))
+        more = rules.beyond(command.name, name)
+        self.out(f"On record for {name} in {command.name}, {count(len(listed) - more, 'answer')}" +
+                 (f", and {more} more where what you set starts or stops" if more else "") + ":\n" +
+                 "\n".join(rules.summary(listed)))
         # Typing rule was a yes to one call. What the student just said may change the user's mind.
         if asked_more and not self.confirm(f"Ask {self.teacher.model} for a rule from these? That is one call to it.",
                                            default=False):
@@ -817,7 +829,7 @@ class Shell:
         if not self.confirm(f"Use this rule for {name} in {command.name}?", default=False):
             self.out("Not installed. What it wrote is kept in the state folder, in rule_calls.jsonl.")
             return
-        path = rules.install(command.name, name, question, choices, code, self.teacher, len(listed))
+        path = rules.install(command.name, name, question, choices, code, self.teacher, len(listed) - more)
         self.out(f"Installed. {command.name} now asks the rule for {name} before the student, and the student only "
                  f"when the rule has no answer.\nDelete {path} to remove it.")
 

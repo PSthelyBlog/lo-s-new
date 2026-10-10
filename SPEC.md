@@ -283,6 +283,11 @@ ways: a judgement, which is a closed question, and a question of the command's o
   - `trace COMMAND NAME` lists the stretches as they were said. The record shown to the teacher
     for a rule holds the value each one starts at, and the value next to it on the other side
     when the user settled that too, so a rule sees exactly where the answer changes.
+  - The answers counted as on record are those for values that came up: one the student was
+    asked about, one a run met and had answered from the record, and one the user set an answer
+    for by itself. Where a stretch starts or stops is not one of them. `rule` and `improve` say
+    how many such values a rule is shown besides, and a rule is said to be made from the
+    answers alone.
   - Where the user's stretches answer, a rule has nothing to add, and `improve` does not count
     what the student was asked there.
 - **Proposed.** What the user set, they can take back. `trace forget NUMBER` does it for a value
@@ -290,7 +295,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
   `up to VALUE` it takes back a stretch, which the value it starts at names.
   - The value is then answered as if the user had never set it: by another stretch of theirs
     that reaches it, then by what the student said before, then by a rule, then by the student.
-    `trace` says which. For a stretch it says which answers on record change, and to what.
+    `trace` says which. For a stretch it says which answers on record change, and to what, and
+    which values a run met are left with no answer. Setting a stretch says which of those have
+    one again.
   - It takes back all the user set for that value or that stretch, not only the latest answer.
   - Taking back is a case of its own, so the record is still only added to. It shows what was
     set and that it was taken back.
@@ -583,6 +590,16 @@ improvements.
   back the command still ran, and the project of 131 days was active again, as the student
   had said. With all three taken back the record was the student's twelve answers, and
   `improve` proposed a rule for it, which it had not while they stood.
+- Counting what came up (`answers` and `beyond` in `los/rules.py`): the owner's trials showed
+  twelve projects and three stretches as 16 answers, and 90 days among the answers a stretch
+  changed, because the values at which stretches start and stop were counted.
+- Replayed on 2026-10-10 on the same copy, with no model running. The three stretches showed as
+  12 answers, all set by the user, with the stretches listed under them. A stretch from 19 days
+  changed three answers and taking it back changed the same three. With a thirteenth project
+  of 2000 days, which only the stretch from 365 days answered, taking that stretch back said
+  that 2000 days had no answer on record, and the listing went from 13 answers to 12. Set
+  again, it went back to 13. With two stretches standing `improve` said 12 answers, and 2 more
+  where what the user set starts or stops.
 
 ## What the first build measured
 

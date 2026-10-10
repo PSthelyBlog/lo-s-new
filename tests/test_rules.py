@@ -22,6 +22,15 @@ def judged(value, answer, by="student", question=QUESTION, name="temperature"):
                  answer, by, "accepted" if by == "user" else "", **({} if by == "user" else {"run": "a run"}))
 
 
+def user(value, answer, verdict="accepted", **more):
+    cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
+                               "value": value}, answer, "user", verdict, **more)
+
+
+def on_record(**more):
+    return rules.answers("sys.health", "temperature", **more)[2]
+
+
 def degrees(*readings, **more):
     for reading in readings:
         judged(f"{reading} °C", "fine" if reading < 80 else "worrying", **more)
@@ -55,29 +64,38 @@ class RecordTest(Folders):
                                   ("100 °C", "worrying", "student")])
 
     def test_a_stretch_the_user_set_answers_for_what_is_on_record_in_it_and_shows_where_it_starts(self):
-        def stretch(reach, value, answer):
-            cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
-                                       "value": value}, answer, "user", "accepted", reach=reach)
-
         degrees(60, 70, 85, 95)
-        stretch("from", "65 °C", "worrying")
-        # 70 °C was fine to the student. The value below the start is not listed: nobody settled it.
-        self.assertEqual(rules.answers("sys.health", "temperature")[2], [
+        user("65 °C", "worrying", reach="from")
+        # 70 °C was fine to the student. Where the stretch starts is no value that came up.
+        self.assertEqual(on_record(), [("60 °C", "fine", "student"), ("70 °C", "worrying", "user"),
+                                       ("85 °C", "worrying", "user"), ("95 °C", "worrying", "user")])
+        # A rule is shown it. The value below the start is not listed: nobody settled it.
+        self.assertEqual(on_record(edges=True), [
             ("60 °C", "fine", "student"), ("65 °C", "worrying", "user"), ("70 °C", "worrying", "user"),
             ("85 °C", "worrying", "user"), ("95 °C", "worrying", "user")])
-        stretch("up to", "64.5 °C", "fine")
-        self.assertEqual(rules.answers("sys.health", "temperature")[2][:4], [
+        self.assertEqual(rules.beyond("sys.health", "temperature"), 1)
+        user("64.5 °C", "fine", reach="up to")
+        self.assertEqual(on_record(edges=True)[:4], [
             ("60 °C", "fine", "user"), ("64 °C", "fine", "user"), ("64.5 °C", "fine", "user"), ("65 °C", "worrying", "user")])
-        shown, held = rules.split(rules.answers("sys.health", "temperature")[2])
+        shown, held = rules.split(on_record(edges=True))
         self.assertEqual(held, [])                      # all of it is the user's now, and none of that is held back
-        self.assertEqual(rules.summary(rules.answers("sys.health", "temperature")[2]),
-                         ["  60 to 64.5 °C: fine", "  65 to 95 °C: worrying"])
+        self.assertEqual(rules.summary(on_record(edges=True)), ["  60 to 64.5 °C: fine", "  65 to 95 °C: worrying"])
+        self.assertEqual((rules.summary(on_record()), rules.beyond("sys.health", "temperature")),
+                         (["  60 °C: fine", "  70 to 95 °C: worrying"], 3))
+
+    def test_what_came_up_is_what_was_asked_or_met_or_set_by_itself(self):
+        degrees(60, 85)
+        user("75 °C", "worrying", reach="from")
+        judged("90 °C", "worrying", "memory")           # a run met it after that, and the stretch answered
+        user("80 °C", "fine")
+        self.assertEqual(on_record(), [("60 °C", "fine", "student"), ("80 °C", "fine", "user"),
+                                       ("85 °C", "worrying", "user"), ("90 °C", "worrying", "user")])
+        user("80 °C", "fine", "taken back")             # the stretch answers there now, and nothing ever met it
+        self.assertEqual([value for value, _, _ in on_record()], ["60 °C", "85 °C", "90 °C"])
+        user("75 °C", "worrying", "taken back", reach="from")
+        self.assertEqual(on_record(), [("60 °C", "fine", "student"), ("85 °C", "worrying", "student")])   # 90 °C has none left
 
     def test_what_the_user_took_back_is_not_on_record(self):
-        def user(value, answer, verdict, **more):
-            cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
-                                       "value": value}, answer, "user", verdict, **more)
-
         user("70 °C", "worrying", "accepted")           # a value nobody else judged
         user("70 °C", "worrying", "taken back")
         self.assertIsNone(rules.answers("sys.health", "temperature"))     # the user took back all there was
@@ -85,11 +103,10 @@ class RecordTest(Folders):
         user("70 °C", "worrying", "accepted")
         user("65 °C", "worrying", "accepted", reach="from")
         user("65 °C", "worrying", "taken back", reach="from")
-        self.assertEqual(rules.answers("sys.health", "temperature")[2], [      # neither the stretch nor where it started
+        self.assertEqual(on_record(edges=True), [       # neither the stretch nor where it started
             ("60 °C", "fine", "student"), ("70 °C", "worrying", "user"), ("85 °C", "worrying", "student")])
         user("70 °C", "worrying", "taken back")
-        self.assertEqual(rules.answers("sys.health", "temperature")[2], [("60 °C", "fine", "student"),
-                                                                         ("85 °C", "worrying", "student")])
+        self.assertEqual(on_record(edges=True), [("60 °C", "fine", "student"), ("85 °C", "worrying", "student")])
 
     def test_only_answers_to_the_question_as_it_is_asked_now_count(self):
         degrees(40, 50, 60, 70, 85, 95, question="Is this fine for a server room?")
@@ -325,6 +342,19 @@ class RuleWordTest(Folders):
         self.assertRegex(self.shown[-1], r"\nA rule answers temperature where it can, made from 8 answers on [\d-]+\.$")
         shell.handle("rule sys.health temperature")     # asking again says what it would replace
         self.assertIn("A rule for it is in use already, made from 8 answers on ", self.shown[8])
+
+    def test_a_rule_is_shown_where_what_the_user_set_starts_and_stops_and_they_are_not_counted_as_answers(self):
+        degrees(40, 50, 60, 70, 85, 90, 95, 100)
+        user("80 °C", "worrying", reach="from")
+        user("72 °C", "fine", reach="up to")
+        shell = self.shell(GOOD, answers=["y"])
+        shell.handle("rule sys.health temperature")
+        self.assertEqual(self.shown[:3], ["On record for temperature in sys.health, 8 answers, and 2 more where what you "
+                                          "set starts or stops:\n  40 to 72 °C: fine\n  80 to 100 °C: worrying",
+                                          "Asking scripted-teacher for a rule from 10 answers on record for temperature in "
+                                          "sys.health. 0 more are held back to test it.", "Trying it on all 10 in the sandbox."])
+        self.assertIn('"72 °C" => fine   (set by the user)\n"80 °C" => worrying   (set by the user)', self.teacher.user)
+        self.assertEqual(rules.installed()[("sys.health", "temperature")]["cases"], 8)
 
     def test_a_rule_that_gets_an_answer_wrong_is_not_offered_and_can_be_sent_back(self):
         degrees(40, 50, 60, 70, 80, 90, 95, 100)

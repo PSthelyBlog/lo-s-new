@@ -66,11 +66,12 @@ class JudgementsTest(Folders):
             judged(value, answer)
         self.assertIn("about temperature 6 times", improve.judgements(TABLE)[0].text)
         stretch("from", "85 °C", "worrying")            # the student is still asked below it
-        self.assertIn("about temperature 3 times, 1.8 s in all. 7 answers are on record", improve.judgements(TABLE)[0].text)
+        self.assertIn("about temperature 3 times, 1.8 s in all. 6 answers are on record, and 1 more where what you set "
+                      "starts or stops, enough for a rule", improve.judgements(TABLE)[0].text)
         stretch("up to", "84 °C", "fine")               # and now nowhere
         self.assertEqual(improve.judgements(TABLE), [])
         stretch("up to", "84 °C", "fine", verdict="taken back")     # taken back, it is the student's again
-        self.assertIn("about temperature 3 times, 1.8 s in all. 7 answers are on record", improve.judgements(TABLE)[0].text)
+        self.assertIn("about temperature 3 times, 1.8 s in all. 6 answers are on record, and 1 more", improve.judgements(TABLE)[0].text)
 
     def test_a_rule_that_leaves_much_to_the_student_may_be_made_again(self):
         judged("50 °C")
