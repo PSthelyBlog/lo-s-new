@@ -613,11 +613,16 @@ improvements.
   lines, which is kept out of the repository on purpose.
 - Tried on 2026-10-10. `setup.sh` was run offline on stand-in archives: it laid out the folder
   `serve.sh` reads, and a second run fetched nothing. Its three addresses answered with the
-  sizes of the files the first build had fetched. The download itself was not run: on the
-  owner's machine `runtime/` was filled with a copy of those files. With `LOS_RUNTIME` unset the
-  server started from it, had no file of the first build open, answered a plain-language line
-  and judged two values. The routing report printed from `data/` was the same, line for line,
-  as the one printed from the first build's folder.
+  sizes of the files the first build had fetched. On the owner's machine `runtime/` was filled
+  with a copy of those files. With `LOS_RUNTIME` unset the server started from it, had no file
+  of the first build open, answered a plain-language line and judged two values. The routing
+  report printed from `data/` was the same, line for line, as the one printed from the first
+  build's folder.
+- `setup.sh` was then run for real, into a folder of its own. The build arrived in about 2
+  minutes and the model in 35. Every file was the same, byte for byte, as in `runtime/`.
+  `serve.sh` found the build and the model there, and the server program ran when asked only
+  for its version; the model was not loaded from that folder. A second run took 2 seconds and
+  fetched nothing.
 
 ## What the first build measured
 
