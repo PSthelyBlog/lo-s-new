@@ -8,8 +8,8 @@ better, or steadier?
 
 - The lines, the command tables and the teacher's labels are those of the first build's dispatch
   experiment: 100 plain-language lines, a table of 200 commands of which the first 10, 50 or 200
-  are shown, and the answer Claude Opus 5.5 gave for each line at each size. `run.py` reads them
-  from that folder (`--data`). They are not copied here.
+  are shown, and the answer Claude Opus 5.5 gave for each line at each size. They are in `data/`,
+  copied unchanged from that experiment, so that this one runs without the first build.
 - The student is asked the way the shell asks: the instructions, then the command table, then the
   line, with its answer limited to one command and that command's parameters, or none
   (`los/route.py`). Nothing is sent that turns the server's prompt cache off.
@@ -35,12 +35,12 @@ one start of the server.
 ## Running it
 
 ```
-LOS_RUNTIME=/path/to/runtime scripts/serve.sh             # in another terminal
-experiments/routing/run.py --data /path/to/first-build/experiments/dispatch plain
-experiments/routing/run.py --data ... nearest
-experiments/routing/run.py --data ... reversed
-experiments/routing/run.py --data ... steady
-experiments/routing/run.py --data ... report
+scripts/serve.sh                                          # in another terminal
+experiments/routing/run.py plain
+experiments/routing/run.py nearest
+experiments/routing/run.py reversed
+experiments/routing/run.py steady
+experiments/routing/run.py report
 ```
 
 ## Results, 2026-10-08 (Gemma 4 26B-A4B q4_0, llama.cpp b11146, RTX 3070 Laptop 8 GB)

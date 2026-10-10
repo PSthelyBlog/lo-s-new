@@ -142,17 +142,20 @@ It was tried with version 0.12.0. Where it is missing or cannot build a sandbox,
 it starts: the starter commands then run without one, and a command a model wrote does not run at
 all, unless you set `LOS_NO_SANDBOX=1`.
 
-**The student** is any server that speaks the OpenAI chat API. `scripts/serve.sh` starts
-llama.cpp's `llama-server` from a folder you already have:
+**The student** is any server that speaks the OpenAI chat API. Two scripts set up and start the
+one lo-s was built with, llama.cpp's `llama-server` on Gemma 4 26B-A4B:
 
 ```
-LOS_RUNTIME=/path/to/runtime scripts/serve.sh      # leave running in another terminal
+scripts/setup.sh      # once: downloads llama.cpp and the model into runtime/, about 16 GB
+scripts/serve.sh      # leave running in another terminal
 ```
 
-That folder holds the llama.cpp build in `llama.cpp/llama-b*/`, its CUDA runtime beside it in
-`llama.cpp/cudart-*/`, and the model in `models/`. lo-s downloads nothing. It was built with
-Gemma 4 26B-A4B (the q4_0 file, 14.4 GB) on a laptop GPU with 8 GB and about 31 GB of RAM. To use
-another model or another server, change `los.toml`.
+`setup.sh` fetches the llama.cpp build for Linux on x64 with an NVIDIA card, and the q4_0 file of
+the model (14.4 GB). It installs nothing outside `runtime/`, and deleting that folder undoes it.
+lo-s itself downloads nothing. If you have them already, set `LOS_RUNTIME` to the folder that
+holds the build in `llama.cpp/llama-b*/`, its CUDA runtime beside it in `llama.cpp/cudart-*/`,
+and the model in `models/`. lo-s was built on a laptop GPU with 8 GB and about 31 GB of RAM. To
+use another model or another server, change `los.toml`.
 
 **The teacher** is reached by running your own `claude` program, which has to be installed and
 signed in. It is asked only when you type `delegate` or `rule`, or agree to a question a command

@@ -3,17 +3,17 @@
 whether showing it the user's nearest confirmed lines makes its choice better or steadier.
 
 The lines, the command tables and the teacher's labels are those of the first build's dispatch
-experiment, read from where they are (--data). The student is asked the way the shell asks
+experiment, kept unchanged in data/. The student is asked the way the shell asks
 (los/route.py), with the server's prompt cache on. Every answer is recorded once in
 results/TAG.jsonl; running again fills gaps only.
 
-  run.py --data DIR plain       the 100 lines at 10, 50 and 200 commands, as the shell asks them
-  run.py --data DIR nearest     the same, each line shown with its 3 nearest labelled lines
-  run.py --data DIR steady      50 commands plus one more that some other line is meant for, six
-                                times over, asked both ways
-  run.py --data DIR reversed    the 100 lines at 50 commands again, plainly, last line first: how
-                                much the answers move when nothing but the order changes
-  run.py --data DIR report
+  run.py plain       the 100 lines at 10, 50 and 200 commands, as the shell asks them
+  run.py nearest     the same, each line shown with its 3 nearest labelled lines
+  run.py steady      50 commands plus one more that some other line is meant for, six times
+                     over, asked both ways
+  run.py reversed    the 100 lines at 50 commands again, plainly, last line first: how much the
+                     answers move when nothing but the order changes
+  run.py report
 """
 import argparse
 import json
@@ -204,7 +204,8 @@ def report(data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("what", choices=["plain", "nearest", "steady", "reversed", "report"])
-    parser.add_argument("--data", type=pathlib.Path, required=True, help="the first build's experiments/dispatch folder")
+    parser.add_argument("--data", type=pathlib.Path, default=HERE / "data",
+                        help="another folder to read the lines, the command table and the teacher's labels from")
     parser.add_argument("--url", help="the student's server, if not the one in los.toml")
     opts = parser.parse_args()
     if opts.what == "report":

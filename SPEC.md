@@ -33,6 +33,8 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   need, has the teacher work out what to send. The teacher may be told which models the machine
   is set up with and how they are reached. When the answer is a new command, teaching is offered
   at once.
+- **Decided.** This build "should not depend on" the first one "to run". What it needs, it holds
+  or fetches itself, and nothing it does reads the first build's folder.
 
 ## Principles
 
@@ -367,6 +369,10 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Proposed.** The student is served the simple way: one start, llama.cpp's own placement of the
   weights, prompt cache on (`scripts/serve.sh`). Each prompt is laid out with the part that does
   not change first: the instructions, then the command table, then the line.
+- **Proposed.** The llama.cpp build and the model file live in `runtime/` in the project, which
+  git ignores. `scripts/setup.sh` downloads them there, the same build and the same file the
+  first build was measured with, and installs nothing elsewhere. `LOS_RUNTIME` names another
+  folder for both scripts, for someone who has them already. lo-s itself downloads nothing.
 
 ## Looking for improvements
 
@@ -600,6 +606,18 @@ improvements.
   that 2000 days had no answer on record, and the listing went from 13 answers to 12. Set
   again, it went back to 13. With two stretches standing `improve` said 12 answers, and 2 more
   where what the user set starts or stops.
+- Standing without the first build (`scripts/setup.sh`, `runtime/`, and `data/` in
+  `experiments/routing/`): the student's llama.cpp build and model are fetched into the
+  project's own folder, and the routing experiment holds the lines, the command table and the
+  teacher's labels it reads. The rewording experiment still needs a file of the owner's own
+  lines, which is kept out of the repository on purpose.
+- Tried on 2026-10-10. `setup.sh` was run offline on stand-in archives: it laid out the folder
+  `serve.sh` reads, and a second run fetched nothing. Its three addresses answered with the
+  sizes of the files the first build had fetched. The download itself was not run: on the
+  owner's machine `runtime/` was filled with a copy of those files. With `LOS_RUNTIME` unset the
+  server started from it, had no file of the first build open, answered a plain-language line
+  and judged two values. The routing report printed from `data/` was the same, line for line,
+  as the one printed from the first build's folder.
 
 ## What the first build measured
 

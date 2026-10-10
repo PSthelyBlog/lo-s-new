@@ -8,6 +8,9 @@ PROMPT.md
 # plugin.verb and holds the words it was written for, which are the user's own.
 plugins/*.*/
 
+# The student's llama.cpp build and model file, which scripts/setup.sh downloads
+runtime/
+
 # Python
 __pycache__/
 *.pyc

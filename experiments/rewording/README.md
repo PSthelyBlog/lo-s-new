@@ -36,7 +36,7 @@ which is a reference.
 ## Running it
 
 ```
-LOS_RUNTIME=/path/to/runtime scripts/serve.sh             # in another terminal
+scripts/serve.sh                                          # in another terminal
 experiments/rewording/run.py --data /path/to/lines.json ask
 experiments/rewording/run.py --data /path/to/lines.json report
 experiments/rewording/run.py --data /path/to/lines.json replay
