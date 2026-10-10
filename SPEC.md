@@ -352,6 +352,13 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Open.** An answer can be set only for a judgement that has been asked once, because `trace`
   takes the question and its choices from the record. So stretches that would answer every value
   cannot be set while the student is unreachable and nothing is on record.
+  - Looked at on 2026-10-10 and put off. The question, its answers and the way a value is
+    written are in the command's code, not in its manifest, so nothing knows them before a run.
+    With no student a run stops at the first judgement and records nothing.
+  - A way that leaves manifests alone: when a run asks and nobody answers, record the question,
+    its answers and the value as asked and not answered, never use that case as an answer, have
+    the command's message say what to type, and let `trace` set answers from it. A first run
+    would still be needed, and a command would still stop at the first judgement nobody answers.
 - **Open.** A rule leaves the values between two answers to the student, and the spread that would
   narrow that stretch is offered only when too little is on record. A value that drifts, such
   as an age in days, walks into it, and with the student unreachable the whole command stops.
