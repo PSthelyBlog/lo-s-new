@@ -64,7 +64,8 @@ class CompleteTest(Folders):
         self.assertEqual(complete("rule ", ""), ["sys.health "])            # the one command that asks for a judgement
         self.assertEqual(complete("trace sys.health ", "t"), ["temperature "])
         self.assertEqual(complete("rule sys.health memory ", ""), [])
-        self.assertEqual(complete("trace sys.health memory ", ""), ["from ", "up to "])     # a stretch of values
+        self.assertEqual(complete("trace ", ""), ["forget ", "sys.health "])
+        self.assertEqual(complete("trace sys.health memory ", ""), ["forget ", "from ", "up to "])      # taking back, or a stretch
         self.assertEqual(complete("trace sys.health memory ", "u"), ["up to "])
         self.assertEqual(complete("improve ", ""), ["lines"])
         self.assertEqual(complete("forget ", ""), [])
@@ -80,6 +81,23 @@ class CompleteTest(Folders):
         self.assertEqual(complete("trace sys.health memory 5% free is ", "w"), ["worrying"])
         self.assertEqual(complete("trace 1 ", ""), ["fine", "worrying"])
         self.assertEqual(complete("trace 2 ", ""), [])
+
+    def test_forget_is_followed_by_what_the_user_set(self):
+        asked = {"command": "sys.health", "name": "memory", "ask": "Fine or worrying?", "choices": ["fine", "worrying"]}
+        self.assertEqual((complete("trace sys.health memory forget ", ""), complete("trace forget ", "")), ([], []))
+        for percent in (70, 20):
+            cases.record("judgement", {**asked, "value": f"{percent}% free"}, "fine", "student", run="one")
+        self.assertEqual((complete("trace sys.health memory forget ", ""), complete("trace forget ", "")), ([], []))
+        cases.record("judgement", {**asked, "value": "20% free"}, "worrying", "user", "accepted")
+        cases.record("judgement", {**asked, "value": "10% free"}, "worrying", "user", "accepted", reach="up to")
+        cases.record("judgement", {**asked, "value": "50% free"}, "fine", "user", "accepted", reach="from")
+        self.assertEqual(complete("trace sys.health memory forget ", ""), ["20% free", "from 50% free", "up to 10% free"])
+        self.assertEqual(complete("trace sys.health memory forget ", "f"), ["from 50% free"])
+        self.assertEqual(complete("trace sys.health memory forget up to ", ""), ["10% free"])    # from the word being typed on
+        self.assertEqual(complete("trace sys.health memory forget 20% ", "f"), ["free"])
+        self.assertEqual(complete("trace forget ", ""), ["2"])                   # the one of the latest run that is the user's
+        cases.record("judgement", {**asked, "value": "20% free"}, "worrying", "user", "taken back")
+        self.assertEqual((complete("trace sys.health memory forget ", "2"), complete("trace forget ", "")), ([], []))
 
     def test_means_is_followed_by_a_command_line(self):
         self.assertEqual(complete("means ", "no"), ["note.add "])

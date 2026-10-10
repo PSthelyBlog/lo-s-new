@@ -28,9 +28,9 @@ class Case(Folders):
     def judge(self, minds, value, run="run 1", question=QUESTION, name="temperature"):
         return minds.judge(HEALTH, run, name, question, value, LEVELS)
 
-    def stretch(self, reach, value, answer, question=QUESTION):
+    def stretch(self, reach, value, answer, question=QUESTION, verdict="accepted"):
         cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": question, "choices": LEVELS,
-                                   "value": value}, answer, "user", "accepted", reach=reach)
+                                   "value": value}, answer, "user", verdict, reach=reach)
 
 
 class JudgementTest(Case):
@@ -97,6 +97,26 @@ class JudgementTest(Case):
         self.assertEqual(self.judge(minds, "90 °C"), "worrying")
         self.assertEqual(self.student.calls, 0)
 
+    def test_what_the_user_took_back_counts_no_more_than_if_they_had_never_set_it(self):
+        minds = self.minds(FINE, FINE)
+        self.judge(minds, "80 °C")
+        question = cases.judgements()[0]["question"]
+        cases.record("judgement", question, "fine", "user", "accepted")
+        cases.record("judgement", question, "worrying", "user", "accepted")
+        cases.record("judgement", question, "worrying", "user", "taken back")
+        self.assertEqual(self.judge(minds, "80 °C"), "fine")        # what the student said, and not what was set first
+        self.assertEqual((self.student.calls, cases.judgements()[-1]["source"]), (1, "student"))
+        self.stretch("from", "70 °C", "fine")
+        self.stretch("from", "85 °C", "worrying")
+        self.assertEqual(self.judge(minds, "90 °C"), "worrying")
+        self.stretch("from", "85.0 °C", "worrying", verdict="taken back")       # the same start, written another way
+        self.assertEqual(self.judge(minds, "90 °C"), "fine")        # the one from 70 °C reaches there now
+        self.stretch("from", "70 °C", "fine", verdict="taken back")
+        self.assertEqual((cases.own(question), cases.stretches(question)), (({}, []), []))
+        self.assertEqual((self.judge(minds, "90 °C"), self.student.calls), ("fine", 2))     # nothing is left, so it asks
+        self.stretch("from", "85 °C", "worrying")                   # set again, it holds again
+        self.assertEqual((self.judge(minds, "95 °C"), self.student.calls), ("worrying", 2))
+
     def test_the_record_holds_for_one_question_of_one_command_only(self):
         minds = self.minds(FINE, WORRYING, WORRYING)
         self.judge(minds, "80 °C")
@@ -154,6 +174,15 @@ class RuleInTheOrderTest(Case):
         self.assertEqual([by for _, _, by in recorded()], ["rule", "rule"])
         path.unlink()
         self.assertEqual((self.judge(minds, "40 °C"), rules.installed()), ("worrying", {}))
+
+    def test_an_answer_the_user_took_back_is_the_rules_again(self):
+        minds = self.minds()
+        self.install()
+        question = {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS, "value": "40 °C"}
+        cases.record("judgement", question, "worrying", "user", "accepted")
+        self.assertEqual(self.judge(minds, "40 °C"), "worrying")
+        cases.record("judgement", question, "worrying", "user", "taken back")
+        self.assertEqual((self.judge(minds, "40 °C"), cases.judgements()[-1]["by"], self.student.calls), ("fine", "rule", 0))
 
     def test_a_rule_made_for_another_question_is_not_asked(self):
         minds = self.minds(WORRYING)
@@ -311,7 +340,8 @@ class ThroughTheSandboxTest(Case):
 
 
 USAGE = ("Usage: trace sys.health temperature VALUE is ANSWER, with one of its answers: fine or worrying. from VALUE or "
-         "up to VALUE sets every value above it or below it as well.")
+         "up to VALUE sets every value above it or below it as well. forget VALUE takes back what you set, with from or "
+         "up to for a stretch.")
 
 
 class TraceTest(Folders):
@@ -358,7 +388,8 @@ class TraceTest(Folders):
         self.judged("run 2", "memory", "12% of 31 GB available", "worrying", "memory", source="user")
         shell.handle("trace")
         self.assertEqual(self.shown[-2:], ["1. memory of 12% of 31 GB available: worrying  (on record, set by you)",
-                                           "To set one yourself: trace NUMBER ANSWER, such as trace 1 fine."])
+                                           "To set one yourself: trace NUMBER ANSWER, such as trace 1 fine. To take back "
+                                           "what you set: trace forget NUMBER."])
 
     def test_trace_shows_everything_on_record_for_one_judgement_and_sets_any_value(self):
         shell = self.shell()
@@ -430,6 +461,87 @@ class TraceTest(Folders):
             shell.handle(wrong_use)
             self.assertEqual(self.shown[-1], USAGE, wrong_use)
 
+    def test_the_user_can_take_back_an_answer_they_set_for_a_value_of_the_latest_run(self):
+        shell = self.shell()
+        self.judged("run 1", "temperature", "80 °C", "fine", "student", seconds=0.6)
+        self.judged("run 1", "temperature", "95 °C", "worrying", "rule")
+        shell.handle("trace 1 worrying")
+        shell.handle("trace 2 fine")
+        self.judged("run 2", "temperature", "80 °C", "worrying", "memory", source="user")
+        self.judged("run 2", "temperature", "95 °C", "fine", "memory", source="user")
+        shell.handle("trace")
+        self.assertEqual(self.shown[-1], "To set one yourself: trace NUMBER ANSWER, such as trace 1 fine. To take back what "
+                                         "you set: trace forget NUMBER.")
+        shell.handle("trace forget 1")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 80 °C in sys.health, which was "
+                                         "worrying. It is now fine, as the student said.")
+        shell.handle("trace forget 2")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 95 °C in sys.health, which was fine. "
+                                         "sys.health asks the student when it next meets that value.")
+        shell.handle("trace")
+        self.assertEqual(self.shown[-3:], [
+            "1. temperature of 80 °C: worrying  (on record, set by you); you have since taken that back",
+            "2. temperature of 95 °C: fine  (on record, set by you); you have since taken that back",
+            "To set one yourself: trace NUMBER ANSWER, such as trace 1 fine."])
+        shell.handle("trace forget 1")
+        self.assertEqual(self.shown[-1], "You have set no answer for temperature of 80 °C alone.")
+        for wrong_use in ("trace forget", "trace forget 3", "trace forget one", "trace forget 1 2"):
+            shell.handle(wrong_use)
+            self.assertEqual(self.shown[-1], "Usage: trace forget NUMBER, with a number that trace lists.", wrong_use)
+        self.assertEqual([(case["answer"], case["verdict"]) for case in cases.judgements() if case["by"] == "user"],
+                         [("worrying", "accepted"), ("fine", "accepted"), ("worrying", "taken back"), ("fine", "taken back")])
+
+    def test_an_answer_taken_back_under_a_rule_is_the_rules_again(self):
+        shell = self.shell()
+        self.judged("run 1", "temperature", "95 °C", "worrying", "rule")
+        rules.install("sys.health", "temperature", "Is this temperature fine or worrying?", LEVELS,
+                      "def rule(value):\n    return 'worrying'\n", Scripted(), 8)
+        shell.handle("trace 1 fine")
+        shell.handle("trace forget 1")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 95 °C in sys.health, which was fine. "
+                                         "It is now worrying, by its rule.")
+
+    def test_the_user_can_take_back_a_stretch_or_the_answer_for_any_value(self):
+        shell = self.shell()
+        for degrees in (40, 60, 80, 90, 100):
+            self.judged("run 1", "temperature", f"{degrees} °C", "fine" if degrees < 95 else "worrying", "student")
+        for line in ("from 50 °C is worrying", "from 85 °C is fine", "60 °C is fine", "80 °C is fine"):
+            shell.handle(f"trace sys.health temperature {line}")
+        shell.handle("trace sys.health temperature")
+        self.assertTrue(self.shown[-1].endswith("\nTo take back what you set: trace sys.health temperature forget VALUE, "
+                                                "such as trace sys.health temperature forget from 50 °C."))
+        shell.handle("trace sys.health temperature forget from 85 °C")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 85 °C and every value above it in "
+                                         "sys.health, which was fine.\n2 answers on record change with it: 90 °C and "
+                                         "100 °C to worrying.")
+        shell.handle("trace sys.health temperature forget 80 °C is fine")       # what the answer was may follow
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 80 °C in sys.health, which was fine. "
+                                         "It is now worrying, by what you set from 50 °C.")
+        shell.handle("trace sys.health temperature forget 80 °C")
+        self.assertEqual(self.shown[-1], "You have set no answer for temperature of 80 °C alone. It is worrying by what "
+                                         "you set from 50 °C. trace sys.health temperature forget from 50 °C takes that back.")
+        shell.handle("trace sys.health temperature forget up to 50 °C")
+        self.assertEqual(self.shown[-1], "You have set nothing up to 50 °C for temperature in sys.health. You set: from "
+                                         "50 °C is worrying.")
+        shell.handle("trace sys.health temperature forget from 50.0 °C")        # the same start, written another way
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 50 °C and every value above it in "
+                                         "sys.health, which was worrying.\n2 answers on record change with it: 80 °C and "
+                                         "90 °C to fine.")
+        shell.handle("trace sys.health temperature forget from 50 °C")
+        self.assertEqual(self.shown[-1], "You have set nothing from 50 °C for temperature in sys.health.")
+        shell.handle("trace sys.health temperature forget 60 °C")
+        self.assertEqual(self.shown[-1], "Taken back: your answer for temperature of 60 °C in sys.health, which was fine. "
+                                         "It stays fine, as the student said.")
+        for wrong_use in ("trace sys.health temperature forget", "trace sys.health temperature forget from",
+                          "trace sys.health temperature forget up to"):
+            shell.handle(wrong_use)
+            self.assertEqual(self.shown[-1], USAGE, wrong_use)
+        shell.handle("trace sys.health temperature")                             # as it was before anything was set
+        self.assertEqual(self.shown[-1], "On record for temperature in sys.health, 5 answers:\n  40 to 90 °C: fine\n"
+                                         "  100 °C: worrying\nTo set one yourself: trace sys.health temperature VALUE is "
+                                         "ANSWER, such as trace sys.health temperature 40 °C is worrying. With from VALUE "
+                                         "or up to VALUE, the answer also holds for every value above it or below it.")
+
     def test_trace_says_how_to_set_an_answer_when_it_cannot_read_one(self):
         shell = self.shell()
         self.judged("run 1", "memory", "12% of 31 GB available", "fine", "student")
@@ -450,6 +562,8 @@ class TraceTest(Folders):
         self.judged("run 2", "memory", "70%", "fine", "memory", source="student")
         self.judged("run 2", "temperature", "95 °C", "worrying", "rule")
         shell.handle("trace 2 fine")
+        shell.handle("trace 1 worrying")
+        shell.handle("trace forget 1")
         state.append("delegations", {"words": "x", "answer": {"answer": "cannot"}})
         state.append("rule_calls", {"command": "sys.health", "failed": "no answer"})
         state.append("asks", {"command": "chat.ask", "to": "student", "seconds": 1})
@@ -458,6 +572,6 @@ class TraceTest(Folders):
         self.assertEqual(self.shown[-1].splitlines()[5:], [
             "Judgements inside commands: 4 (1 from the record and 1 by a rule, saving about 1.2 s; 2 by the student, "
             "taking 1.2 s)",
-            "Set by you with trace: 1",
+            "Set by you with trace: 2, and 1 taken back",
             "Calls to the teacher: 3, of which 1 gave no answer (1 by delegate, 1 for rules, 1 by commands)",
             "Needs waiting: 0"])

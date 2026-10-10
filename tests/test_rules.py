@@ -73,6 +73,24 @@ class RecordTest(Folders):
         self.assertEqual(rules.summary(rules.answers("sys.health", "temperature")[2]),
                          ["  60 to 64.5 °C: fine", "  65 to 95 °C: worrying"])
 
+    def test_what_the_user_took_back_is_not_on_record(self):
+        def user(value, answer, verdict, **more):
+            cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
+                                       "value": value}, answer, "user", verdict, **more)
+
+        user("70 °C", "worrying", "accepted")           # a value nobody else judged
+        user("70 °C", "worrying", "taken back")
+        self.assertIsNone(rules.answers("sys.health", "temperature"))     # the user took back all there was
+        degrees(60, 85)
+        user("70 °C", "worrying", "accepted")
+        user("65 °C", "worrying", "accepted", reach="from")
+        user("65 °C", "worrying", "taken back", reach="from")
+        self.assertEqual(rules.answers("sys.health", "temperature")[2], [      # neither the stretch nor where it started
+            ("60 °C", "fine", "student"), ("70 °C", "worrying", "user"), ("85 °C", "worrying", "student")])
+        user("70 °C", "worrying", "taken back")
+        self.assertEqual(rules.answers("sys.health", "temperature")[2], [("60 °C", "fine", "student"),
+                                                                         ("85 °C", "worrying", "student")])
+
     def test_only_answers_to_the_question_as_it_is_asked_now_count(self):
         degrees(40, 50, 60, 70, 85, 95, question="Is this fine for a server room?")
         degrees(41, 91)

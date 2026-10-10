@@ -60,11 +60,22 @@ def _after(table, words):
     if word == "improve" and not rest:
         return ["lines"]
     if word in ("rule", "trace") and not rest:
-        return [name + " " for name in judging]
+        return [name + " " for name in judging] + ["forget "] * (word == "trace")
+    if word == "trace" and rest == ["forget"]:      # trace forget NUMBER: the answers of the latest run that the user set
+        return [str(number) for number, case in enumerate(cases.latest_run(), 1)
+                if case["question"]["value"] in cases.own(case["question"])[0]]
     if word in ("rule", "trace") and len(rest) == 1 and rest[0] in judging:
         return [name + " " for name in table[rest[0]].judges]
     if word == "trace" and len(rest) == 2 and rest[0] in judging:        # a stretch: from VALUE or up to VALUE
-        return ["from ", "up to "]
+        return ["from ", "up to ", "forget "]
+    if word == "trace" and len(rest) > 2 and rest[0] in judging and rest[2] == "forget":
+        # What the user set and can take back, given from the word being typed on.
+        found, typed = rules.answers(rest[0], rest[1]), "".join(word + " " for word in rest[3:])
+        if not found:
+            return []
+        asked = {"command": rest[0], "name": rest[1], "ask": found[0], "choices": found[1]}
+        yours = [f"{case['reach']} {case['question']['value']}" for case in cases.stretches(asked)] + list(cases.own(asked)[0])
+        return [one[len(typed):] for one in yours if one.startswith(typed)]
     if word == "trace" and rest[0] in judging and rest[-1] == "is":      # trace COMMAND NAME VALUE is ANSWER
         found = rules.answers(rest[0], rest[1])
         return list(found[1]) if found else []

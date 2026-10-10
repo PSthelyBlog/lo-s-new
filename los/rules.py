@@ -76,8 +76,9 @@ def answers(command, name):
     """What is on record for one judgement: (the question, the allowed answers, one (value, answer,
     who gave it) per value, in the order of the values), or nothing when no answer is on record.
     The answer for a value is the one the user set, for that value or for a stretch it lies in,
-    and otherwise what the student said. Only cases asked the way the command asks now count:
-    under another question they would be answers to something else.
+    and otherwise what the student said. What the user took back is as if never set. Only cases
+    asked the way the command asks now count: under another question they would be answers to
+    something else.
 
     Where the user set a stretch, the value it starts at is listed, and the value next to it on
     the other side when the user settled that one too. Those two are what shows a rule exactly
@@ -95,6 +96,8 @@ def answers(command, name):
         known = cases.judged({**same, "value": value}, asked)
         if known:
             found[value] = (value, known["answer"], known["by"])
+    if not found:       # the user took back all there was
+        return None
     return same["ask"], same["choices"], sorted(found.values(), key=lambda one: _natural(one[0]))
 
 

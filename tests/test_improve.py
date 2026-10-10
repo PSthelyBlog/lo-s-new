@@ -57,9 +57,9 @@ class JudgementsTest(Folders):
         self.assertIn("about temperature 1 time, 0.6 s in all. 7 answers are on record", improve.judgements(TABLE)[0].text)
 
     def test_what_the_user_set_for_a_whole_stretch_is_not_worth_a_rule(self):
-        def stretch(reach, value, answer):
+        def stretch(reach, value, answer, verdict="accepted"):
             cases.record("judgement", {"command": "sys.health", "name": "temperature", "ask": QUESTION, "choices": LEVELS,
-                                       "value": value}, answer, "user", "accepted", reach=reach)
+                                       "value": value}, answer, "user", verdict, reach=reach)
 
         for value, answer in (("30 °C", "fine"), ("50 °C", "fine"), ("70 °C", "fine"), ("90 °C", "worrying"),
                               ("95 °C", "worrying"), ("100 °C", "worrying")):
@@ -69,6 +69,8 @@ class JudgementsTest(Folders):
         self.assertIn("about temperature 3 times, 1.8 s in all. 7 answers are on record", improve.judgements(TABLE)[0].text)
         stretch("up to", "84 °C", "fine")               # and now nowhere
         self.assertEqual(improve.judgements(TABLE), [])
+        stretch("up to", "84 °C", "fine", verdict="taken back")     # taken back, it is the student's again
+        self.assertIn("about temperature 3 times, 1.8 s in all. 7 answers are on record", improve.judgements(TABLE)[0].text)
 
     def test_a_rule_that_leaves_much_to_the_student_may_be_made_again(self):
         judged("50 °C")

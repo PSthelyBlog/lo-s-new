@@ -112,9 +112,9 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 ## Cases and the order of asking
 
 - **Proposed.** A case is one answered question: what was asked, the answer, who gave it and what
-  the user said about it (accepted, declined or wrong). Cases are appended to
-  `state/cases.jsonl` and never changed. There are two kinds of question: which command a line
-  means, and what a named judgement inside a command comes to.
+  the user said about it (accepted, declined or wrong; taken back, for an answer of their own).
+  Cases are appended to `state/cases.jsonl` and never changed. There are two kinds of question:
+  which command a line means, and what a named judgement inside a command comes to.
 - **Proposed.** A typed line is handled in this order:
   1. It is one of the shell's own words.
   2. It parses as a structured command. It runs as typed; a destructive one asks first.
@@ -285,6 +285,15 @@ ways: a judgement, which is a closed question, and a question of the command's o
     when the user settled that too, so a rule sees exactly where the answer changes.
   - Where the user's stretches answer, a rule has nothing to add, and `improve` does not count
     what the student was asked there.
+- **Proposed.** What the user set, they can take back. `trace forget NUMBER` does it for a value
+  of the latest run and `trace COMMAND NAME forget VALUE` for any value. With `from VALUE` or
+  `up to VALUE` it takes back a stretch, which the value it starts at names.
+  - The value is then answered as if the user had never set it: by another stretch of theirs
+    that reaches it, then by what the student said before, then by a rule, then by the student.
+    `trace` says which. For a stretch it says which answers on record change, and to what.
+  - It takes back all the user set for that value or that stretch, not only the latest answer.
+  - Taking back is a case of its own, so the record is still only added to. It shows what was
+    set and that it was taken back.
 - **Proposed.** The student is asked with the question and the allowed answers at the start of
   the prompt and the value alone after it. Measured: that is what lets the server reuse its work
   when two kinds of judgement are asked in turn.
@@ -326,8 +335,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Open.** A spread varies the first number in a value and nothing else, and a stretch goes by
   that number too. So a judgement of something that is not a number in fixed text cannot be
   spread, and no stretch can be set for it.
-- **Open.** An answer the user set cannot be handed back to the student, for one value or for a
-  stretch. It can only be set again.
+- **Open.** Only what the user set can be taken back. What the student said for a value stays on
+  record and holds again once the user's answer is gone, so the student cannot be asked about
+  that value afresh.
 - **Open.** An answer can be set only for a judgement that has been asked once, because `trace`
   takes the question and its choices from the record. So stretches that would answer every value
   cannot be set while the student is unreachable and nothing is on record.
@@ -565,6 +575,14 @@ improvements.
   the student unreachable, all twelve ages were answered from what the user had set, and the
   listing took 0.18 seconds. The settled line had taken 0.64 with the rule, which runs in a
   sandbox of its own for each age.
+- Taking back (`own` in `los/cases.py`, and `trace forget NUMBER` and `trace COMMAND NAME forget
+  VALUE` in the shell): what the user set for a value or for a stretch no longer counts.
+- Replayed on 2026-10-10 on a copy of the record from the owner's trial of stretches, with no
+  model running. A stretch set from 19 days by mistake for 91 changed four answers on record,
+  and taking it back left the record as it was before. With the stretch from 91 days taken
+  back the command still ran, and the project of 131 days was active again, as the student
+  had said. With all three taken back the record was the student's twelve answers, and
+  `improve` proposed a rule for it, which it had not while they stood.
 
 ## What the first build measured
 

@@ -118,7 +118,8 @@ their own lines are, the teacher turns that into a rule, and in the end no model
 - **A command can ask for a judgement** that no code makes, such as whether a temperature is
   worrying. The answer comes from what is on record for that exact value, then from a rule, and
   from the student last. `trace` shows where each answer came from and lets you set one, or
-  say where a line is: an answer for a value and every one above or below it.
+  say where a line is: an answer for a value and every one above or below it. What you set you
+  can take back.
   `rule` has the teacher turn the answers on record into a small function, which is tried on
   every one of them before you are asked to use it.
 - **`improve` lists what the records show could be better**: something you keep asking for, a
@@ -171,6 +172,7 @@ wants to put to it.
 | `trace COMMAND NAME` | Shows every answer on record for one judgement. |
 | `trace COMMAND NAME VALUE is ANSWER` | Sets the answer for any value. |
 | `trace COMMAND NAME from VALUE is ANSWER` | Sets it for that value and every one above it; `up to`, below it. |
+| `trace forget NUMBER`, `trace COMMAND NAME forget VALUE` | Takes back what you set, and with `from VALUE` or `up to VALUE` what you set for a stretch. |
 | `rule COMMAND NAME` | Asks the teacher to turn a judgement's answers into a rule. |
 | `improve`, `improve lines` | Lists what could be better, or checks written commands' example lines. |
 | `stats` | Counts who answered what, and the model time that saved. |

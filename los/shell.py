@@ -23,8 +23,9 @@ input line to correct.
 
 A command may ask for a judgement while it runs. `trace` shows the judgements of the latest run
 and where each answer came from, and lets the user set one, or one for a whole stretch of
-values. `rule` has the teacher turn the answers on record for one judgement into code. `improve`
-lists what the records show could be better, and what to type for each.
+values, and take back what they set. `rule` has the teacher turn the answers on record for one
+judgement into code. `improve` lists what the records show could be better, and what to type
+for each.
 """
 import argparse
 import datetime
@@ -56,7 +57,9 @@ BUILTINS = {
              "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on. "
              "trace COMMAND NAME shows every answer on record for one judgement, and trace COMMAND NAME VALUE is "
              "ANSWER sets the answer for any value. With from VALUE or up to VALUE in place of VALUE, the answer "
-             "holds for that value and every one above it or below it, which says where a line is in one go.",
+             "holds for that value and every one above it or below it, which says where a line is in one go. "
+             "trace forget NUMBER and trace COMMAND NAME forget VALUE take back what you set, and with from VALUE "
+             "or up to VALUE what you set for a stretch. The value is then answered as if you had never set it.",
     "rule": "rule COMMAND NAME asks the teacher to turn the answers on record for one judgement into a small "
             "function. It is tried on every one of them, and you see it before it is used. From then on that "
             "judgement asks the rule before the student. When too little is on record, it first offers to put "
@@ -83,6 +86,11 @@ def several(things, most=6):
     """A list in a sentence: a, b and c, with the count of the rest when there are many."""
     things = things if len(things) <= most else things[:most - 1] + [f"{len(things) - most + 1} more"]
     return ", ".join(things[:-1]) + (" and " if len(things) > 1 else "") + things[-1]
+
+
+def reaching(stretch):
+    """A stretch the way the user says it: from 91 days."""
+    return f"{stretch['reach']} {stretch['question']['value']}"
 
 
 class Shell:
@@ -481,6 +489,7 @@ class Shell:
                 for source in ("memory", "rule", "student")}
         spent = [case.get("seconds") or 0 for case in made["student"]]
         spared = (len(made["memory"]) + len(made["rule"])) * (statistics.median(spent) if spent else 0)
+        back = sum(case["verdict"] == "taken back" for case in judged)
         self.out(f"Plain-language lines: {len(by['memory']) + len(by['student'])}\n"
                  f"Answered from memory: {len(by['memory'])}, saving about {len(by['memory']) * usual:.1f} s of model time\n"
                  f"Answered by the student: {len(by['student'])}, taking {sum(took):.1f} s "
@@ -493,7 +502,8 @@ class Shell:
                  (f"Judgements inside commands: {sum(map(len, made.values()))} ({len(made['memory'])} from the record "
                   f"and {len(made['rule'])} by a rule, saving about {spared:.1f} s; {len(made['student'])} by the "
                   f"student, taking {sum(spent):.1f} s)\n"
-                  f"Set by you with trace: {sum(case['by'] == 'user' for case in judged)}\n" if judged else "") +
+                  f"Set by you with trace: {sum(case['by'] == 'user' and case['verdict'] != 'taken back' for case in judged)}" +
+                  (f", and {back} taken back" if back else "") + "\n" if judged else "") +
                  f"Calls to the teacher: {sum(map(len, calls.values()))}" +
                  (f", of which {failed} gave no answer" if failed else "") +
                  (" (" + ", ".join(f"{len(kind)} {how}" for how, kind in calls.items()) + ")"
@@ -561,6 +571,12 @@ class Shell:
         if not asked:
             self.out("No command has asked for a judgement yet.")
             return
+        if words and words[0] == "forget":
+            if len(words) != 2 or not words[1].isdigit() or not 1 <= int(words[1]) <= len(asked):
+                self.out("Usage: trace forget NUMBER, with a number that trace lists.")
+                return
+            self.take_back(asked[int(words[1]) - 1]["question"])
+            return
         if words:
             case = asked[int(words[0]) - 1] if words[0].isdigit() and 1 <= int(words[0]) <= len(asked) else None
             answer = " ".join(words[1:])
@@ -577,14 +593,19 @@ class Shell:
                       if case["by"] == "rule" and case["answer"] != answer else ""))
             return
         self.out(f"{asked[0]['question']['command']} asked for {count(len(asked), 'judgement')} the last time it needed any:")
+        mine = False
         for number, case in enumerate(asked, 1):
             question, now = case["question"], cases.judged(case["question"])
+            yours = bool(now) and now["by"] == "user"
+            mine = mine or yours
             how = {"student": f"the student, {case.get('seconds') or 0:.1f} s", "rule": "a rule",
                    "memory": "on record, set by you" if case.get("source") == "user" else "on record, from the student"}
             self.out(f"{number}. {question['name']} of {question['value']}: {case['answer']}  ({how[case['by']]})" +
-                     (f"; you have since set it to {now['answer']}" if now and now["answer"] != case["answer"] else ""))
+                     ("; you have since taken that back" if (case["by"], case.get("source")) == ("memory", "user") and not yours
+                      else f"; you have since set it to {now['answer']}" if yours and now["answer"] != case["answer"] else ""))
         other = next(choice for choice in asked[0]["question"]["choices"] if choice != asked[0]["answer"])
-        self.out(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}.")
+        self.out(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}." +
+                 (" To take back what you set: trace forget NUMBER." if mine else ""))
 
     def judged_here(self):
         """The judgements the commands in the table ask for, as the end of a usage line."""
@@ -607,20 +628,30 @@ class Shell:
         if len(words) == 2:
             mine = sum(who == "user" for _, _, who in listed)
             other = next(choice for choice in choices if choice != listed[0][1])
-            drawn = [f"{case['reach']} {case['question']['value']} is {case['answer']}" for case in cases.stretches(asked)]
+            drawn = [f"{reaching(case)} is {case['answer']}" for case in cases.stretches(asked)]
+            yours = [reaching(case) for case in cases.stretches(asked)] + list(cases.own(asked)[0])
             self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}" +
                      (f", {mine} of them set by you" if mine else "") + ":\n" + "\n".join(rules.summary(listed)) +
                      (f"\nYou set: {'; '.join(drawn)}." if drawn else "") +
                      f"\nTo set one yourself: trace {command.name} {name} VALUE is ANSWER, such as "
                      f"trace {command.name} {name} {listed[0][0]} is {other}. With from VALUE or up to VALUE, the "
-                     "answer also holds for every value above it or below it.")
+                     "answer also holds for every value above it or below it." +
+                     (f"\nTo take back what you set: trace {command.name} {name} forget VALUE, such as "
+                      f"trace {command.name} {name} forget {yours[0]}." if yours else ""))
             return
-        rest = words[2:]
+        back = words[2] == "forget"
+        rest = words[3:] if back else words[2:]
         reach = "from" if rest[:1] == ["from"] else "up to" if rest[:2] == ["up", "to"] else ""
-        value, _, answer = " ".join(rest[len(reach.split()):]).rpartition(" is ")
-        if not value or answer not in choices:
+        named = " ".join(rest[len(reach.split()):])
+        value, _, answer = named.rpartition(" is ")
+        if back and named:
+            # The value says which answer is meant. What the answer was may follow, and need not.
+            self.take_back({**asked, "value": value if value and answer in choices else named}, reach)
+            return
+        if back or not value or answer not in choices:
             self.out(f"Usage: trace {command.name} {name} VALUE is ANSWER, with one of its answers: {' or '.join(choices)}. "
-                     "from VALUE or up to VALUE sets every value above it or below it as well.")
+                     "from VALUE or up to VALUE sets every value above it or below it as well. forget VALUE takes back "
+                     "what you set, with from or up to for a stretch.")
             return
         if reach and not rules.varying(value):
             self.out(f"{reach} goes by the number in a value, and \"{value}\" has none.")
@@ -645,6 +676,48 @@ class Shell:
         self.out(told + ("" if any(shape(known) == shape(value) for known, _, _ in listed) else
                          f"\nThe values on record look like {listed[0][0]}. One written another way will not come up when "
                          f"{command.name} runs."))
+
+    def take_back(self, question, reach=""):
+        """Take back the answer the user set for one value of a judgement, or for the stretch that
+        starts at it, and say what answers there now."""
+        command, name, value = question["command"], question["name"], question["value"]
+        single, drawn = cases.own(question)
+        if reach:
+            this = next((case for case in drawn if case["reach"] == reach
+                         and cases.edge(case["question"]["value"]) == cases.edge(value)), None)
+            if not this:
+                yours = "; ".join(f"{reaching(case)} is {case['answer']}" for case in cases.stretches(question))
+                self.out(f"You have set nothing {reach} {value} for {name} in {command}." + (f" You set: {yours}." if yours else ""))
+                return
+        else:
+            this, covering = single.get(value), cases.within(value, drawn)
+            if not this:
+                self.out(f"You have set no answer for {name} of {value} alone." +
+                         (f" It is {covering['answer']} by what you set {reaching(covering)}. trace {command} {name} "
+                          f"forget {reaching(covering)} takes that back." if covering else ""))
+                return
+        on_record = lambda: {known: answer for known, answer, _ in (rules.answers(command, name) or ("", [], []))[2]}
+        before = on_record()
+        cases.record("judgement", this["question"], this["answer"], "user", "taken back", **({"reach": reach} if reach else {}))
+        told = f"Taken back: your answer for {name} of {this['question']['value']}" + (
+            f" and every value {'above' if reach == 'from' else 'below'} it" if reach else "") + f" in {command}, which was {this['answer']}."
+        if reach:
+            # A stretch that goes changes answers that are on record. Say which, and to what.
+            now, changed = on_record(), {}
+            for known, answer in before.items():
+                if now.get(known, answer) != answer:
+                    changed.setdefault(now[known], []).append(known)
+            total = sum(map(len, changed.values()))
+            if total:
+                told += (f"\n{count(total, 'answer')} on record {'changes' if total == 1 else 'change'} with it: " +
+                         "; ".join(f"{several(values)} to {answer}" for answer, values in changed.items()) + ".")
+        else:
+            now = cases.judged(this["question"])
+            answer = now["answer"] if now else rules.answer(this["question"])
+            how = f"by what you set {reaching(now)}" if now and now.get("reach") else "as the student said" if now else "by its rule"
+            told += (f" It {'stays' if answer == this['answer'] else 'is now'} {answer}, {how}." if answer else
+                     f" {command} asks the student when it next meets that value.")
+        self.out(told)
 
     def spread(self, command, name, reason):
         """Too little is on record for a rule. When the manifest says between which numbers the
