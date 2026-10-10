@@ -623,6 +623,11 @@ improvements.
   `serve.sh` found the build and the model there, and the server program ran when asked only
   for its version; the model was not loaded from that folder. A second run took 2 seconds and
   fetched nothing.
+- The public repository was then cloned afresh and used from the clone, with nothing
+  downloaded and no model running. The 239 tests passed, `help` listed the eight commands the
+  repository holds, a structured command ran, and the routing report was the same as before.
+  A plain-language line said the student did not answer and named `serve.sh`, which named
+  `setup.sh`.
 
 ## What the first build measured
 
