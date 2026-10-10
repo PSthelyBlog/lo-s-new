@@ -29,7 +29,7 @@ from .cases import varying
 from .models import complete_valid
 from .parse import count
 
-MINIMUM = 6     # different values on record before a rule is attempted
+MINIMUM = 6     # different values a rule is made from, at the least
 COARSE, FINER = 9, 8    # values asked evenly over a range, and then at most this many more where the answer changes
 
 BRIEF = """\
@@ -107,7 +107,7 @@ def beyond(command, name):
     """How many values a rule for a judgement is shown that never came up: those at which a
     stretch the user set starts or stops."""
     with_edges, plain = answers(command, name, edges=True), answers(command, name)
-    return len(with_edges[2]) - len(plain[2]) if with_edges and plain else 0
+    return len(with_edges[2]) - (len(plain[2]) if plain else 0) if with_edges else 0
 
 
 def beside(stretch):
@@ -127,8 +127,11 @@ def recorded(command, name):
         raise Unsuitable("nothing is on record for it yet")
     listed = found[2]
     if len(listed) < MINIMUM:
-        raise Unsuitable(f"only {count(len(listed), 'different value')} {'is' if len(listed) == 1 else 'are'} on "
-                         f"record for it, and a rule needs {MINIMUM}")
+        more = beyond(command, name)
+        known = len(listed) - more
+        raise Unsuitable(f"only {count(known, 'different value')} {'is' if known == 1 else 'are'} on record for it" +
+                         (f" and {more} more where what you set starts or stops" if more else "") +
+                         f", and a rule needs {MINIMUM}")
     if len({answer for _, answer, _ in listed}) < 2:
         raise Unsuitable("every answer on record is the same, so there is no line for a rule to draw")
     return found

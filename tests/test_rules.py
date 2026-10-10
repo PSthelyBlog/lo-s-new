@@ -47,6 +47,24 @@ class RecordTest(Folders):
         degrees(45, 55)
         self.assertEqual(len(rules.recorded("sys.health", "temperature")[2]), 6)
 
+    def test_too_few_values_are_counted_apart_from_where_what_the_user_set_starts_and_stops(self):
+        degrees(40, 50, 90)
+        user("85 °C", "worrying", reach="from")
+        with self.assertRaisesRegex(rules.Unsuitable, "only 3 different values are on record for it and 1 more where "
+                                                      "what you set starts or stops, and a rule needs 6"):
+            rules.recorded("sys.health", "temperature")
+        user("84 °C", "fine", reach="up to")            # 84 and 85 °C are shown to a rule, and neither came up
+        with self.assertRaisesRegex(rules.Unsuitable, "only 3 different values are on record for it and 2 more where"):
+            rules.recorded("sys.health", "temperature")
+        degrees(86)                                     # four that came up and those two are enough
+        self.assertEqual(len(rules.recorded("sys.health", "temperature")[2]), 6)
+
+    def test_where_a_stretch_starts_is_counted_apart_when_nothing_came_up_under_the_question_as_asked_now(self):
+        degrees(40, 90, question="Is this fine for a server room?")
+        user("85 °C", "worrying", reach="from")
+        self.assertIsNone(rules.answers("sys.health", "temperature"))
+        self.assertEqual(rules.beyond("sys.health", "temperature"), 1)
+
     def test_answers_that_are_all_the_same_draw_no_line(self):
         degrees(40, 45, 50, 55, 60, 65)
         with self.assertRaisesRegex(rules.Unsuitable, "every answer on record is the same"):

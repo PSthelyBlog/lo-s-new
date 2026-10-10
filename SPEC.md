@@ -309,7 +309,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Proposed.** `rule COMMAND NAME` asks the teacher for a small pure function `rule(value)` that
   reproduces the answers on record for one judgement, and returns nothing for a value they do
   not settle.
-  - It needs six different values and two different answers.
+  - It needs six different values and two different answers. The values at which the user's
+    stretches start and stop count towards the six. When there are too few, `rule` and
+    `improve` say how many answers are on record and how many more of those values there are.
   - A command's own runs may never give that: a machine that stays cool only ever has "fine" on
     record. So a manifest can give, under `ranges`, the lowest and highest number a judged value
     can hold. When too little is on record, `rule` offers to put values from across that range
@@ -606,6 +608,10 @@ improvements.
   that 2000 days had no answer on record, and the listing went from 13 answers to 12. Set
   again, it went back to 13. With two stretches standing `improve` said 12 answers, and 2 more
   where what the user set starts or stops.
+- When too little was on record for a rule, the two were still counted together: with four
+  answers and one stretch, `improve` said that five different values were on record. Tried on
+  2026-10-10 on a scratch record with no model running, `improve` and `rule` now say four, and
+  1 more where what the user set starts or stops.
 - Standing without the first build (`scripts/setup.sh`, `runtime/`, and `data/` in
   `experiments/routing/`): the student's llama.cpp build and model are fetched into the
   project's own folder, and the routing experiment holds the lines, the command table and the
