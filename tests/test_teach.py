@@ -9,6 +9,7 @@ from unittest import mock
 
 from los import cases, judge, plugins, sandbox, state, teach
 from los.models import ModelUnavailable
+from los.say import Exact
 from los.shell import Shell
 from tests.helpers import NONE, Folders, Scripted, call, needs_sandbox
 
@@ -299,7 +300,9 @@ class ProposalTest(Case):
                                                            "the student sent it to fs.delete."]),
                        ("Another", 2, 4, [])]
         advice = teach.Advice("write", "Nothing deletes files yet.", write(DELETE))
-        self.assertEqual(teach.show(found, advice), "\n".join([
+        shown = teach.show(found, advice)
+        self.assertEqual(shown, "\n".join([             # the code first, and what the decision rests on last
+            "The code of fs.delete:", DELETE["code"].rstrip(), "",
             "fs.delete  Delete one file for good  (effect: destructive)",
             "  --path  the file to delete, such as old-report.txt",
             "Why: Nothing deletes files yet.", "",
@@ -308,8 +311,9 @@ class ProposalTest(Case):
             "Checks: 1 of 2 passed.",
             "  - fs.delete should have given an error and said: Deleted",
             "Lines: with this description the student sent 3 of 4 where they belong. The other descriptions got 2 of 4.",
-            '  - The line "empty the bin" should reach no command, and the student sent it to fs.delete.', "",
-            DELETE["code"].rstrip(), ""]))
+            '  - The line "empty the bin" should reach no command, and the student sent it to fs.delete.']))
+        self.assertEqual(shown.parts[1], Exact(DELETE["code"].rstrip()))    # and the code is shown exactly as written
+        self.assertEqual(type(shown.parts[1]), Exact)
         self.assertEqual(found.failures(), ["The check fs.delete should have given an error and said: Deleted",
                                             'The line "empty the bin" should reach no command, and the student sent it '
                                             'to fs.delete.'])

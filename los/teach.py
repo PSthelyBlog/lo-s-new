@@ -436,8 +436,10 @@ def settle(found, description, words, teacher, proposal):
 
 
 def show(found, advice):
-    """A proposal as the user sees it before deciding: what it does, what it may touch, how its
-    checks and its lines fared, and the code."""
+    """A proposal as the user sees it before deciding. The code comes first, since it is long and
+    approval does not rest on reading it. What the decision does rest on comes last, so that it
+    is in front of the user when they are asked: what the command does, what it may touch, and
+    how its checks and its lines fared."""
     proposal = advice.raw["write"]
     if found.fault:
         return f"{advice.reason}\nIts command, {proposal['plugin']}.{proposal['verb']}, cannot be installed. {found.fault}"
@@ -457,7 +459,7 @@ def show(found, advice):
         parts += [f"  - {miss}" for miss in misses]
     else:
         parts.append(f"Lines: not tried on the student. {found.untried}")
-    return Said("\n".join(parts) + "\n\n", Exact(command.source.read_text().rstrip()), "\n")
+    return Said(f"The code of {command.name}:\n", Exact(command.source.read_text().rstrip()), "\n\n" + "\n".join(parts))
 
 
 def install(found, plugin_dir):

@@ -53,6 +53,9 @@ lo-s> delegate make a backup copy of config.yaml
 Asking claude-opus-5-5 about: make a backup copy of config.yaml
 Running 5 checks of fs.copy in the sandbox.
 Trying 3 descriptions of it on gemma-4-26B-A4B-it-qat-q4_0.gguf.
+The code of fs.copy:
+... the code of the command ...
+
 fs.copy  Copy a file or directory, keeping the original; with no destination it makes a backup copy with .bak added to the name  (effect: write)
   --source  the file or directory to copy
   --dest    new path for the copy, default the source name with .bak added
@@ -65,9 +68,6 @@ It sees no other file of yours and has no network.
 Checks: 5 of 5 passed.
 Lines: with this description the student sent 9 of 10 where they belong. The other descriptions got 8 of 10, 8 of 10.
   - The line "copy the src directory to src.orig" should reach fs.copy, and the student sent it to fs.move.
-
-... the code of the command ...
-
 Install fs.copy? [y/N] y
 Installed fs.copy in plugins/fs.copy. Delete that folder to remove it.
 Now for what you asked: make a backup copy of config.yaml
@@ -113,8 +113,8 @@ their own lines are, the teacher turns that into a rule, and in the end no model
   do it.
 - **A new command is tried before you are asked.** It arrives with its own checks and example
   lines. lo-s runs the checks in the sandbox and puts the lines to the student, then shows you
-  what the command does, what it may touch, how it fared, and the code. Nothing is installed
-  unless you agree, and nothing is removed later on a model's say-so.
+  the code, and after it what the command does, what it may touch and how it fared. Nothing is
+  installed unless you agree, and nothing is removed later on a model's say-so.
 - **A command can ask for a judgement** that no code makes, such as whether a temperature is
   worrying. The answer comes from what is on record for that exact value, then from a rule, and
   from the student last. `trace` shows where each answer came from and lets you set one, or

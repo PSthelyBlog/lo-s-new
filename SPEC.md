@@ -271,8 +271,10 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
      use the network only if the user allows it.
   3. It asks the student the lines once for each description, with the command in the table,
      and keeps the description under which most lines go where they belong.
-- **Proposed.** The user then sees what the command does, what it may touch, how its checks and
-  its lines fared, and the code. They decide. Installing writes the plugin folder, with the
+- **Proposed.** The user then sees the code, and after it what the command does, what it may
+  touch and how its checks and its lines fared. The code comes first because it is long and
+  approval does not rest on reading it: what the decision rests on is then in front of the
+  user when they are asked. They decide. Installing writes the plugin folder, with the
   words it was written for, which model wrote it and when, and everything the teacher returned.
 - **Proposed.** When the words were a request, it is carried out once the command exists.
 - **Proposed.** Nothing is removed afterwards on a model's say-so. A poor score is information
@@ -718,6 +720,10 @@ improvements.
   question before a move started in yellow, and what could be typed next was dim. A listing and
   a command's own output came out as before, and the descriptions in the table of `help` were
   set one under the other. What was checked is the codes written, not the look on a screen.
+- The proposal screen with the code first (`show` in `los/teach.py`). Seen on 2026-10-11 on the
+  proposal the tests use, as a terminal of 92 columns shows it: twelve lines of code, then the
+  ten lines the decision rests on, then the question. Not yet seen with a command the teacher
+  wrote, which takes a call.
 
 ## What the first build measured
 
