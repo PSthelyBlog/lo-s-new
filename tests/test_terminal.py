@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 from los import cases, state, terminal
+from los.say import Aside, Exact, Fault, Said, Warn, voices
 from los.plugins import Command, Param
 from tests.helpers import Folders
 
@@ -259,3 +260,82 @@ class WaitingTest(unittest.TestCase):
     def test_a_time_is_given_to_a_tenth_of_a_second_while_it_is_short(self):
         self.assertEqual([terminal.took(seconds) for seconds in (0.42, 4.02, 9.94, 10.2, 131.09)],
                          ["0.4 s", "4.0 s", "9.9 s", "10 s", "131 s"])
+
+
+B, D, R, Y, O = terminal.BOLD, terminal.DIM, terminal.RED, terminal.YELLOW, terminal.RESET
+
+
+class VoiceTest(unittest.TestCase):
+    """What is said keeps its words, and a terminal shows each part in its voice."""
+
+    def test_what_is_said_in_parts_is_the_words_joined_and_nothing_else_to_anyone_who_reads_it(self):
+        said = Said("Not run. ", Aside("Say wrong to take it back."))
+        self.assertEqual((said, said[:8], said.startswith("Not"), [said]), ("Not run. Say wrong to take it back.", "Not run.",
+                                                                           True, ["Not run. Say wrong to take it back."]))
+        self.assertEqual(voices(Said(said, Said(Fault("no"), Exact("x")), "y")),
+                         [(str, "Not run. "), (Aside, "Say wrong to take it back."), (Fault, "no"), (Exact, "x"), (str, "y")])
+        self.assertEqual(voices("plain"), [(str, "plain")])
+
+    def test_prose_is_broken_between_words_and_set_under_where_its_text_starts(self):
+        self.assertEqual(terminal.render("Nothing here does that yet. It is queued as need 1.", 30),
+                         "Nothing here does that yet. It\nis queued as need 1.")
+        self.assertEqual(terminal.render("1. You have asked 2 times for something nothing does.\n   delegate 1   (one call)", 30),
+                         "1. You have asked 2 times for\n   something nothing does.\n   delegate 1   (one call)")
+        self.assertEqual(terminal.render("fs.list   List the contents of a directory\nfs.usage  Show space", 30),
+                         "fs.list   List the contents of\n          a directory\nfs.usage  Show space")
+        self.assertEqual(terminal.render("  - a check that failed for a reason", 20), "  - a check that\n    failed for a\n    reason")
+        self.assertEqual(terminal.render("one\n\n  two", 30), "one\n\n  two")                 # lines stay lines
+        self.assertEqual(terminal.render("x " * 80, 500).split("\n")[0], ("x " * 50).strip())  # and no line of prose is wider than 100
+
+    def test_a_text_with_a_word_too_long_for_a_line_is_left_as_it_is(self):
+        said = "fs.copy: /a/very/long/path/that/does/not/fit/on/one/line/of/the/screen does not exist"
+        self.assertEqual(terminal.render(Fault(said), 40), R + said + O)
+        self.assertEqual(terminal.render(said, 40, colour=False), said)
+
+    def test_an_aside_is_dim_a_fault_and_a_warning_are_coloured_and_plain_words_are_left_plain(self):
+        said = Said("Not run. ", Aside("If that was the wrong command, say wrong."))
+        self.assertEqual(terminal.render(said, 80), f"Not run. {D}If that was the wrong command, say wrong.{O}")
+        self.assertEqual(terminal.render(said, 30), f"Not run. {D}If that was the wrong{O}\n{D}command, say wrong.{O}")
+        self.assertEqual(terminal.render(said, 30, colour=False), "Not run. If that was the wrong\ncommand, say wrong.")
+        self.assertEqual(terminal.render(Fault("fs.copy: a.txt does not exist"), 80), f"{R}fs.copy: a.txt does not exist{O}")
+        self.assertEqual(terminal.render(Said(Warn("It cannot be undone. "), "Run it?", " [y/N] "), 80),
+                         f"{Y}It cannot be undone. {O}Run it? [y/N]")
+        self.assertEqual(terminal.render(Said(Warn(""), "Run it?"), 80), "Run it?")
+
+    def test_a_command_about_to_run_is_bold_on_one_line_with_where_it_came_from_dim(self):
+        long = "→ fs.move --source ~/a/rather/long/folder/photos --dest ~/a/rather/long/folder/photos-2"
+        self.assertEqual(terminal.render(long, 40), B + long + O)
+        self.assertEqual(terminal.render("→ fs.list --path ~  (remembered)", 80), f"{B}→ fs.list --path ~{O}{D}  (remembered){O}")
+        self.assertEqual(terminal.render("It shows a folder.\n→ fs.list --path '(a)'", 80), f"It shows a folder.\n{B}→ fs.list --path '(a)'{O}")
+        self.assertEqual(terminal.render("→ fs.list  (remembered)", 80, colour=False), "→ fs.list  (remembered)")
+
+    def test_what_is_shown_exactly_is_left_alone_and_what_is_said_around_it_is_not(self):
+        code = "def rule(value):\n    return 'fine' if int(value.split()[0]) < 80 else 'worrying'     # spaces   kept"
+        self.assertEqual(terminal.render(Said(Exact(code), "\n\nWhy: The answers turn between 70 and 90 degrees."), 30),
+                         code + "\n\nWhy: The answers turn between\n70 and 90 degrees.")
+        self.assertEqual(terminal.render(Exact("   3B  a.txt\n→ not a command"), 80), "   3B  a.txt\n→ not a command")
+
+    def test_a_question_is_written_up_to_its_last_line_which_is_what_the_answer_is_typed_after(self):
+        asked, written = [], io.StringIO()
+        question = Said("No rule yet: too little is on record.\n", Warn("It cannot be undone. "), "Run it?", " [y/N] ")
+        with mock.patch("builtins.input", lambda prompt: asked.append(prompt) or "y"), \
+                mock.patch("sys.stdout", written), mock.patch.dict("os.environ", {"COLUMNS": "80"}):
+            self.assertEqual(terminal.ask(question), "y")
+        self.assertEqual((written.getvalue(), asked), ("No rule yet: too little is on record.\n", ["It cannot be undone. Run it? [y/N] "]))
+
+    def test_colour_is_for_a_terminal_and_can_be_turned_off(self):
+        screen = mock.Mock(isatty=lambda: True)
+        with mock.patch.dict("os.environ", {"TERM": "xterm-256color"}):
+            os.environ.pop("NO_COLOR", None)
+            self.assertTrue(terminal.coloured(screen))
+            self.assertFalse(terminal.coloured(io.StringIO()))
+            with mock.patch.dict("os.environ", {"NO_COLOR": "1"}):
+                self.assertFalse(terminal.coloured(screen))
+            with mock.patch.dict("os.environ", {"TERM": "dumb"}):
+                self.assertFalse(terminal.coloured(screen))
+
+    def test_a_wait_is_an_aside(self):
+        screen = Screen()
+        with mock.patch.dict("os.environ", {"COLUMNS": "80"}), terminal.waiting("Asking the teacher", out=screen, colour=True):
+            pass
+        self.assertTrue(screen.getvalue().startswith(D + "Asking the teacher" + O + SAVE + BACK + D + "  0 s" + O + CLEAR))

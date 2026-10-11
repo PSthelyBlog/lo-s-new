@@ -22,6 +22,7 @@ import tempfile
 from . import judge, plugins, route, sandbox, state
 from .models import complete_valid
 from .parse import flag, render
+from .say import Exact, Said
 
 BRIEF = """\
 You are the teacher of lo-s, a personal command line that grows as it is used. You know how \
@@ -456,7 +457,7 @@ def show(found, advice):
         parts += [f"  - {miss}" for miss in misses]
     else:
         parts.append(f"Lines: not tried on the student. {found.untried}")
-    return "\n".join(parts + ["", command.source.read_text().rstrip(), ""])
+    return Said("\n".join(parts) + "\n\n", Exact(command.source.read_text().rstrip()), "\n")
 
 
 def install(found, plugin_dir):

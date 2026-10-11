@@ -41,6 +41,7 @@ import tomllib
 from . import cases, improve, judge, plugins, route, rules, sandbox, state, teach
 from .models import ModelUnavailable, provider
 from .parse import UsageError, count, flag, parse, render, usage
+from .say import Aside, Exact, Fault, Said, Warn
 
 BUILTINS = {
     "help": "help lists the commands. help NAME explains one and says what it may touch.",
@@ -124,6 +125,7 @@ class Shell:
         self.teacher, self.plugin_dir = teacher, plugin_dir
         self.edit = edit    # reads a line that starts out as a given text, where the terminal can do that
         self.watch = None   # counts the seconds of a wait in place, where there is a terminal to do it on
+        self.width = 88     # columns a paragraph is filled to, or None where what is said is broken into lines as it is shown
         self.minds = judge.Minds(student, teacher, self.confirm)    # what a running command reaches a model through
         self.said = None    # the latest plain-language line, so that `means` can settle it
         self.last = None    # that line and the command chosen for it, so that `wrong` can take the choice back
@@ -133,11 +135,14 @@ class Shell:
         folder a path that is not given in full is taken from, and that the student cannot be
         reached when that is so. Finding that out takes a moment and asks the student nothing."""
         waiting = len(cases.waiting())
-        said = (f"lo-s: {count(len(self.table), 'command')}, " + (f"{count(waiting, 'need')} waiting, " if waiting else "") +
-                f"working in {tilde(os.getcwd())}.")
+        said = Aside(f"lo-s: {count(len(self.table), 'command')}, " + (f"{count(waiting, 'need')} waiting, " if waiting else "") +
+                     f"working in {tilde(os.getcwd())}.")
         down = self.student.down() if hasattr(self.student, "down") else None
-        return said + (f"\nThe student is not answering: {down}. If it is the local model, scripts/serve.sh starts "
-                       "it. Lines you settled and typed commands work without it." if down else "")
+        if not down:
+            return said
+        return Said(said, "\n", Warn(f"The student is not answering: {down}. "),
+                    Aside("If it is the local model, scripts/serve.sh starts it. Lines you settled and typed commands "
+                          "work without it."))
 
     @contextlib.contextmanager
     def wait(self, text, kept=True):
@@ -210,7 +215,7 @@ class Shell:
     def run_typed(self, command, args):
         if command.effect == "destructive":
             self.out("→ " + self.typed(command, args))
-            if not self.confirm(UNDONE + "Run it?", default=False):
+            if not self.confirm(Said(Warn(UNDONE), "Run it?"), default=False):
                 self.out("Not run.")
                 return
         self.run(command, args)
@@ -238,12 +243,13 @@ class Shell:
                 with self.wait(f"Asking {self.student.model}", kept=False):
                     choice = route.ask(self.student, self.table, line)
             except ModelUnavailable as error:
-                self.out(f"That is not a command, and the student, which reads plain language, did not answer: {error}.\n"
-                         "If it is the local model, scripts/serve.sh starts it. Structured commands still work; "
-                         "type help to list them.")
+                self.out(Said(Fault("That is not a command, and the student, which reads plain language, did not "
+                                    f"answer: {error}.\n"),
+                              Aside("If it is the local model, scripts/serve.sh starts it. Structured commands still "
+                                    "work; type help to list them.")))
                 return
             except RuntimeError as error:
-                self.out(f"The student's answer could not be used: {error}")
+                self.out(Fault(f"The student's answer could not be used: {error}"))
                 return
             asked = {"model": self.student.model, "seconds": choice.meta.get("seconds")}
             answer, source, mark = {"command": choice.command, "args": choice.args}, "student", ""
@@ -283,17 +289,17 @@ class Shell:
         elif source == "likeness":      # nothing else was on offer, so the line waits as a need
             self.queue(line, "student")
         elif doubted:
-            self.out("Not run. " + FITS)
+            self.out(Said("Not run. ", Aside(FITS)))
         else:
-            self.out("Not run. If that was the wrong command for what you typed, say wrong, or say the right one "
-                     "with means.")
+            self.out(Said("Not run. ", Aside("If that was the wrong command for what you typed, say wrong, or say the "
+                                             "right one with means.")))
 
     def agree(self, command, args, doubted=False):
         """Ask before running a command a model chose. Enter accepts one that only reads; anything
         else, and a choice the user took back before, needs an explicit yes. Where the terminal
         lets a line be edited, the user may correct the command instead. Returns True to run it
         as shown, False to leave it, or the command and values the user made of it."""
-        answer = self.confirm((UNDONE if command.effect == "destructive" else "") + "Run it?",
+        answer = self.confirm(Said(Warn(UNDONE if command.effect == "destructive" else ""), "Run it?"),
                               default=command.effect == "read" and not doubted, edit=bool(self.edit))
         return self.correct(command, args) if answer == "edit" else answer
 
@@ -369,9 +375,9 @@ class Shell:
     def queue(self, line, by):
         waiting = any(need["line"] == line for need in cases.waiting().values())
         number = cases.queue(line, by)
-        self.out(f"Nothing here does that yet. It is {'already ' if waiting else ''}queued as need {number}. " +
-                 (f"delegate {number} asks {self.teacher.model} about it, and " if self.teacher else
-                  "needs lists the queue, and ") + f"forget {number} drops it.")
+        self.out(Said(f"Nothing here does that yet. It is {'already ' if waiting else ''}queued as need {number}. ",
+                      Aside((f"delegate {number} asks {self.teacher.model} about it, and " if self.teacher else
+                             "needs lists the queue, and ") + f"forget {number} drops it.")))
 
     def delegate(self, words):
         """Ask the teacher what to do about something the user wants, and do it if they agree.
@@ -408,7 +414,7 @@ class Shell:
                                              {"student": self.student, "teacher": self.teacher}, EXAMPLE, exchange, earlier)
             except (ModelUnavailable, RuntimeError) as error:
                 state.append("delegations", {**record, "failed": str(error)})
-                self.out(f"No answer came back that could be used: {error}")
+                self.out(Fault(f"No answer came back that could be used: {error}"))
                 if number is None and self.confirm("Queue your words as a need, to ask again later?", default=True):
                     number = cases.queue(words, "user")
                     self.out(f"Queued as need {number}. delegate {number} asks again.")
@@ -447,8 +453,8 @@ class Shell:
         elif choice:
             self.settle(*choice)
         else:
-            self.out("Not run. If that was the wrong command for what you want, say wrong, or say the right one "
-                     "with means.")
+            self.out(Said("Not run. ", Aside("If that was the wrong command for what you want, say wrong, or say the "
+                                             "right one with means.")))
 
     def propose(self, advice, words, number):
         """Try a command the teacher wrote, show what was found and install it if the user agrees.
@@ -463,7 +469,7 @@ class Shell:
             if found.command and self.confirm(f"Install {found.command.name}?", default=False):
                 name, home = found.command.name, teach.install(found, self.plugin_dir)
                 self.table, problems = plugins.load(self.plugin_dir)
-                self.out("\n".join(problems + [f"Installed {name} in {home}. Delete that folder to remove it."]))
+                self.out(Said("\n".join(problems + [f"Installed {name} in {home}. "]), Aside("Delete that folder to remove it.")))
                 if found.tried:     # where its own lines went under the description kept: what a later check compares with
                     improve.note(name, found.tried[0][4])
                 self.suggest(name, proposal)
@@ -593,9 +599,9 @@ class Shell:
         found = improve.find(self.table)
         for number, one in enumerate(found, 1):
             self.out(f"{number}. {one.text}" + (f"\n   {one.do}   ({one.cost or 'free'})" if one.do else ""))
-        self.out(("" if found else "Nothing stands out in what is on record so far.\n") +
-                 "improve lines puts each written command's own example lines to the student again, to see whether "
-                 "they reach it. That is free.")
+        self.out(Said("" if found else "Nothing stands out in what is on record so far.\n",
+                      Aside("improve lines puts each written command's own example lines to the student again, to see "
+                            "whether they reach it. That is free.")))
 
     def check_lines(self):
         """Ask the student the example lines each written command came with, as the table is now."""
@@ -612,7 +618,7 @@ class Shell:
                            f"{count(len(written), 'command')} a model wrote."):
                 results = improve.check(self.student, self.table)
         except ModelUnavailable as error:
-            self.out(f"The student did not answer: {error}.")
+            self.out(Fault(f"The student did not answer: {error}."))
             return
         def told(name, line, reached, earlier):
             went = f"  \"{line}\" goes to {reached or 'no command'}"
@@ -676,8 +682,8 @@ class Shell:
                      ("; you have since taken that back" if (case["by"], case.get("source")) == ("memory", "user") and not yours
                       else f"; you have since set it to {now['answer']}" if yours and now["answer"] != case["answer"] else ""))
         other = next(choice for choice in asked[0]["question"]["choices"] if choice != asked[0]["answer"])
-        self.out(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}." +
-                 (" To take back what you set: trace forget NUMBER." if mine else ""))
+        self.out(Aside(f"To set one yourself: trace NUMBER ANSWER, such as trace 1 {other}." +
+                       (" To take back what you set: trace forget NUMBER." if mine else "")))
 
     def judged_here(self):
         """The judgements the commands in the table ask for, as the end of a usage line."""
@@ -702,14 +708,14 @@ class Shell:
             other = next(choice for choice in choices if choice != listed[0][1])
             drawn = [f"{reaching(case)} is {case['answer']}" for case in cases.stretches(asked)]
             yours = [reaching(case) for case in cases.stretches(asked)] + list(cases.own(asked)[0])
-            self.out(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}" +
-                     (f", {mine} of them set by you" if mine else "") + ":\n" + "\n".join(rules.summary(listed)) +
-                     (f"\nYou set: {'; '.join(drawn)}." if drawn else "") +
-                     f"\nTo set one yourself: trace {command.name} {name} VALUE is ANSWER, such as "
-                     f"trace {command.name} {name} {listed[0][0]} is {other}. With from VALUE or up to VALUE, the "
-                     "answer also holds for every value above it or below it." +
-                     (f"\nTo take back what you set: trace {command.name} {name} forget VALUE, such as "
-                      f"trace {command.name} {name} forget {yours[0]}." if yours else ""))
+            self.out(Said(f"On record for {name} in {command.name}, {count(len(listed), 'answer')}" +
+                          (f", {mine} of them set by you" if mine else "") + ":\n" + "\n".join(rules.summary(listed)) +
+                          (f"\nYou set: {'; '.join(drawn)}." if drawn else ""),
+                          Aside(f"\nTo set one yourself: trace {command.name} {name} VALUE is ANSWER, such as "
+                                f"trace {command.name} {name} {listed[0][0]} is {other}. With from VALUE or up to VALUE, "
+                                "the answer also holds for every value above it or below it." +
+                                (f"\nTo take back what you set: trace {command.name} {name} forget VALUE, such as "
+                                 f"trace {command.name} {name} forget {yours[0]}." if yours else ""))))
             return
         back = words[2] == "forget"
         rest = words[3:] if back else words[2:]
@@ -878,7 +884,7 @@ class Shell:
                     output, meta = rules.ask(self.teacher, command, name, question, choices, shown, earlier)
             except (ModelUnavailable, RuntimeError) as error:
                 state.append("rule_calls", {**record, "failed": str(error)})
-                self.out(f"No rule came back: {error}")
+                self.out(Fault(f"No rule came back: {error}"))
                 return
             state.append("rule_calls", {**record, "seconds": meta.get("seconds"), "answer": output})
             reason = " ".join(output["reason"].split())
@@ -892,14 +898,15 @@ class Shell:
                 problems, answered = rules.failures(code, shown, held)
             if not problems:
                 break
-            self.out(f"{code}\n\nWhy: {reason}\nThis rule cannot be used:\n" + "\n".join(f"  - {problem}" for problem in problems))
+            self.out(Said(Exact(code), f"\n\nWhy: {reason}\nThis rule cannot be used:\n" +
+                          "\n".join(f"  - {problem}" for problem in problems)))
             if not self.confirm(f"Have {self.teacher.model} put it right? That is one more call to it.", default=False):
                 self.out("Not installed. What it wrote is kept in the state folder, in rule_calls.jsonl.")
                 return
             earlier = (code, problems)
-        self.out(f"{code}\n\nWhy: {reason}\nIt gives the answer on record for all {len(shown)} it was shown. Of the "
-                 f"{len(held)} held back, it gives the answer on record for {answered} and leaves {len(held) - answered} "
-                 "to the student.")
+        self.out(Said(Exact(code), f"\n\nWhy: {reason}\nIt gives the answer on record for all {len(shown)} it was shown. "
+                      f"Of the {len(held)} held back, it gives the answer on record for {answered} and leaves "
+                      f"{len(held) - answered} to the student."))
         if not self.confirm(f"Use this rule for {name} in {command.name}?", default=False):
             self.out("Not installed. What it wrote is kept in the state folder, in rule_calls.jsonl.")
             return
@@ -910,11 +917,12 @@ class Shell:
     def run(self, command, args):
         result = self.runner(command, args, minds=self.minds)
         if result.broke:
-            self.out(f"{command.name} broke. The fault is in the command, not in what you typed.\n{result.text}")
+            self.out(Said(Fault(f"{command.name} broke. The fault is in the command, not in what you typed.\n"),
+                          Exact(result.text)))
         elif not result.ok:
-            self.out(f"{command.name}: {result.text}")
+            self.out(Fault(f"{command.name}: {result.text}"))
         elif result.text:
-            self.out(result.text)
+            self.out(Exact(result.text))
 
     def confirm(self, question, default, edit=False):
         """Ask a question that takes yes or no. Enter gives the default. Only y, yes, n and no are
@@ -924,7 +932,7 @@ class Shell:
         choices = ("Y/n" if default else "y/N") + ("/edit" if edit else "")
         while True:
             try:
-                answer = self.ask(f"{question} [{choices}] ").strip().lower()
+                answer = self.ask(Said(question, f" [{choices}] ")).strip().lower()
             except EOFError:  # nobody is there to agree
                 return False
             if not answer:
@@ -939,7 +947,7 @@ class Shell:
         if not names:
             width = max(map(len, self.table), default=0)
             self.out("\n".join(f"{name:{width}}  {self.table[name].description}" for name in sorted(self.table)))
-            self.out("\n" + textwrap.fill(
+            said = (
                 "Type a command as NAME --parameter value, or say what you want in your own words: the command "
                 "that fits is shown before it runs. " + (
                     "Answer e there to correct it first. Tab completes what you are typing: a command, its "
@@ -950,7 +958,8 @@ class Shell:
                 "the latest command asked for, and rule COMMAND NAME has the teacher turn one into code. improve "
                 "lists what lo-s could do better, with what to type for each, and stats counts who answered. "
                 "help NAME explains a command and says what it may touch; each runs in a sandbox that holds only "
-                "that. exit leaves.", width=88))
+                "that. exit leaves.")
+            self.out("\n" + (textwrap.fill(said, width=self.width) if self.width else said))
             return
         for name in names:
             if name in BUILTINS:
@@ -995,11 +1004,13 @@ def main(argv=None):
     read = input
     if sys.stdout.isatty():
         from . import terminal
-        shell.watch = terminal.waiting      # someone is watching, so a wait is shown as it goes
+        # Someone is watching. What is said is shown in its voice and broken into lines there, and a
+        # wait is shown as it goes.
+        shell.out, shell.ask, shell.width, shell.watch = terminal.show, terminal.ask, None, terminal.waiting
         if opts.line is None and sys.stdin.isatty():
             # History, completion and a line to correct, for a person at the prompt.
             read, shell.edit = terminal.start(lambda: shell.table, state.directory() / "history")
-            print(shell.greeting())
+            shell.out(shell.greeting())
     while True:
         try:
             if not shell.handle(opts.line if opts.line is not None else read("lo-s> ")) or opts.line is not None:

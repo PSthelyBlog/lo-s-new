@@ -9,14 +9,15 @@ Three things, all from Python's readline:
   and what follows them, and the lines the user has settled.
 - A line to correct: the shell can put a command on the input line for the user to change.
 
-And one thing that needs only a terminal to write to: a count of the seconds while a model is
-waited for.
+And what needs only a terminal to write to: each thing said shown in its voice and broken
+between words to the width of the screen, and a count of the seconds while a model is waited for.
 
 `complete` works out what could follow what has been typed and needs no terminal, so it is the
 part the tests cover.
 """
 import contextlib
 import os
+import re
 import shutil
 import sys
 import textwrap
@@ -26,10 +27,86 @@ import unicodedata
 
 from . import cases, rules
 from .parse import flag
+from .say import Aside, Exact, Fault, Warn, voices
 
 KEPT = 2000     # lines of history kept from one session to the next
 ALONE = ("wrong", "needs", "stats", "exit")                             # the shell's words that stand alone
 TAKING = ("help", "means", "forget", "delegate", "trace", "rule", "improve")    # and those that take more
+
+
+BOLD, DIM, RED, YELLOW, RESET = "\x1b[1m", "\x1b[2m", "\x1b[31m", "\x1b[33m", "\x1b[0m"
+STYLE = {Aside: DIM, Fault: RED, Warn: YELLOW}      # lo-s speaking plainly, and what is shown exactly, have none
+WIDEST = 100    # columns a line of prose takes at the most, however wide the terminal is
+CHOSEN = re.compile(r"(→ .*?)((?:  \([^()]*\))?)")      # a command as it will run, and where the choice came from
+HANG = re.compile(r"\s*(?:\d+\.\s+|-\s+|\S+\s{2,})?")     # what the rest of a broken line is set under
+
+
+def coloured(out=None):
+    """Whether to use colour and weight: at a terminal, unless NO_COLOR says not to."""
+    out = out or sys.stdout
+    return out.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+
+
+def render(text, width, colour=True):
+    """What is said, as the lines a terminal shows.
+
+    lo-s speaking is broken between words to the width, and what follows a break is set under
+    the start of the text: after the number of a numbered line, or the name in a table. An aside
+    is dim, a fault and a warning are coloured, and a command about to run is bold. What is shown
+    exactly is left alone, whatever its length. Without `colour` only the breaking is done."""
+    def paint(style, words):
+        return f"{style}{words}{RESET}" if colour and style and words else words
+
+    lines, line = [], []        # each line as the runs of words it is made of, with their voices
+    for voice, words in voices(text):
+        first, *rest = words.split("\n")
+        line.append((voice, first))
+        for more in rest:
+            lines.append(line)
+            line = [(voice, more)]
+    rows, width = [], min(width, WIDEST)
+    for line in lines + [line]:
+        plain = "".join(words for _, words in line)
+        chosen = CHOSEN.fullmatch(plain)
+        if any(voice is Exact and words for voice, words in line):
+            rows.append(plain)
+        elif chosen:        # kept on one line, so that it can be copied as it is
+            rows.append(paint(BOLD, chosen[1]) + paint(DIM, chosen[2]))
+        else:
+            under = len(HANG.match(plain).group())
+            under = under if under <= width // 2 else len(plain) - len(plain.lstrip())
+            marks = iter([voice for voice, words in line for char in words if not char.isspace()])
+            # A word too long for a line, such as a deep path, would be set on a line by itself. Such a
+            # text is left for the terminal to break, as it always was.
+            fits = all(len(word) <= width - under for word in plain.split())
+            for row in (textwrap.wrap(plain, width, subsequent_indent=" " * under, break_long_words=False,
+                                      break_on_hyphens=False) if fits else [plain]) or [""]:
+                parts, voice, run = [], str, ""
+                for char in row:        # breaking moves spaces and nothing else, so the voices are counted off
+                    mine = voice if char.isspace() else next(marks)
+                    if mine is not voice:
+                        parts.append(paint(STYLE.get(voice), run))
+                        run = ""
+                    voice, run = mine, run + char
+                rows.append("".join(parts) + paint(STYLE.get(voice), run))
+    return "\n".join(rows)
+
+
+def show(text):
+    """Say something at the terminal."""
+    sys.stdout.write(render(text, shutil.get_terminal_size().columns, coloured()) + "\n")
+    sys.stdout.flush()
+
+
+def ask(question):
+    """Put a question at the terminal the way things are said there, and read the answer. All of
+    it but its last line is written, and that line is what the answer is typed after."""
+    *above, last = render(question, shutil.get_terminal_size().columns, coloured()).split("\n")
+    if above:
+        sys.stdout.write("\n".join(above) + "\n")
+    if "readline" in sys.modules:       # which has to be told what in a prompt takes no room on the screen
+        last = re.sub(r"(\x1b\[[0-9;]*m)", "\x01\\1\x02", last)
+    return input(last + (" " if question.endswith(" ") else ""))
 
 
 SOON = 1.5      # seconds a wait may last before a line that is not kept is shown at all
@@ -48,7 +125,7 @@ def _columns(text):
 
 
 @contextlib.contextmanager
-def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
+def waiting(text, kept=True, out=None, soon=SOON, every=1.0, colour=None):
     """Show that something is being waited for, and for how long: the seconds are counted in
     place for as long as the block runs.
 
@@ -60,6 +137,7 @@ def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
     Nothing else may be written or asked while the block runs."""
     out = out or sys.stdout
     width, started, over = shutil.get_terminal_size().columns, time.monotonic(), threading.Event()
+    dim, plain = (DIM, RESET) if (coloured(out) if colour is None else colour) else ("", "")    # it is an aside
     shown = []
 
     def write(*parts):
@@ -71,9 +149,9 @@ def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
         # word too long to break leaves none, the count goes on a line of its own. The place is
         # noted once, so a text of several lines is not written again.
         text = "\n".join(row for line in text.split("\n") for row in textwrap.wrap(
-            line, max(width - ROOM, 20), break_long_words=False, break_on_hyphens=False) or [""])
+            line, max(min(width, WIDEST) - ROOM, 20), break_long_words=False, break_on_hyphens=False) or [""])
         used = _columns(text) % width
-        write(text, "" if 0 < used <= width - ROOM else "\n", SAVE)
+        write(dim, text, plain, "" if 0 < used <= width - ROOM else "\n", SAVE)
 
     def count():
         if not kept and over.wait(soon):
@@ -81,9 +159,9 @@ def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
         while True:
             seconds = f"  {time.monotonic() - started:.0f} s"
             if kept:
-                write(BACK, seconds, CLEAR)
+                write(BACK, dim, seconds, plain, CLEAR)
             else:
-                write("\r", text[:max(width - ROOM, 0)], seconds, CLEAR)
+                write("\r", dim, text[:max(width - ROOM, 0)], seconds, plain, CLEAR)
             shown.append(seconds)
             if over.wait(every):
                 return
@@ -96,7 +174,7 @@ def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
         over.set()
         counting.join()
         if kept:
-            write(BACK, f"  ({took(time.monotonic() - started)})", CLEAR, "\n")
+            write(BACK, dim, f"  ({took(time.monotonic() - started)})", plain, CLEAR, "\n")
         elif shown:
             write("\r", CLEAR)
 

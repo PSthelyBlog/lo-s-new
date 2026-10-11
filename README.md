@@ -138,7 +138,10 @@ That is enough for structured commands. `help` lists them, and `help NAME` expla
 what it may touch. `./lo-s -c "LINE"` runs one line and exits.
 
 At a terminal, lo-s starts by saying how many commands it has, which folder it takes paths from,
-and whether the student can be reached. While it waits for a model it counts the seconds.
+and whether the student can be reached. While it waits for a model it counts the seconds. What it
+says is broken between words to the width of the terminal. A command about to run is bold, what
+went wrong is red, and what could be typed next is dim; what a command prints is left as it is.
+Set `NO_COLOR` to have no colour.
 
 **The sandbox** is made with bubblewrap (the `bwrap` program), which most distributions package.
 It was tried with version 0.12.0. Where it is missing or cannot build a sandbox, lo-s says so when

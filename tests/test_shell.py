@@ -4,6 +4,7 @@ from unittest import mock
 
 from los import cases, sandbox, shell
 from los.sandbox import Result
+from los.say import Aside, Exact, Fault, Warn, voices
 from tests.helpers import NONE, Folders, ShellCase, needs_sandbox
 
 
@@ -156,3 +157,36 @@ class StartTest(ShellCase):
         shell.handle("book a flight")
         self.assertEqual(waits, [("Asking scripted", False, 1)])
         self.assertFalse(any(said.startswith("Asking") for said in self.shown))
+
+
+class VoicesTest(ShellCase):
+    """The shell says each thing in a voice. The words are what they were."""
+
+    def test_a_commands_own_output_is_shown_exactly_and_its_failure_is_a_fault(self):
+        self.shell(result=Result("  3B  a.txt")).handle("fs.list")
+        self.assertEqual(voices(self.shown[-1]), [(Exact, "  3B  a.txt")])
+        self.shell(result=Result("/nope is not a directory", ok=False)).handle("fs.list --path /nope")
+        self.assertEqual(voices(self.shown[-1]), [(Fault, "fs.list: /nope is not a directory")])
+        self.shell(result=Result("Traceback ...", ok=False, broke=True)).handle("fs.list")
+        self.assertEqual(voices(self.shown[-1]), [(Fault, "fs.list broke. The fault is in the command, not in what you "
+                                                          "typed.\n"), (Exact, "Traceback ...")])
+
+    def test_what_could_be_typed_next_is_an_aside_and_what_cannot_be_undone_is_a_warning(self):
+        shell = self.shell(NONE, answers=["n"])
+        shell.handle("order a large pizza")
+        self.assertEqual(voices(self.shown[-1]), [(str, "Nothing here does that yet. It is queued as need 1. "),
+                                                  (Aside, "needs lists the queue, and forget 1 drops it.")])
+        shell.handle("fs.move --source a --dest b")
+        self.assertEqual(voices(self.asked[-1]), [(Warn, "It makes changes that cannot be undone. "), (str, "Run it?"),
+                                                  (str, " [y/N] ")])
+        shell.handle("improve")
+        self.assertEqual([voice for voice, _ in voices(self.shown[-1])], [str, Aside])
+        self.assertEqual(voices(shell.greeting())[0][0], Aside)
+
+    def test_the_help_text_is_filled_to_a_width_unless_what_shows_it_breaks_lines_itself(self):
+        shell = self.shell()
+        shell.handle("help")
+        self.assertTrue(all(len(line) <= 88 for line in self.shown[-1].splitlines()))
+        shell.width = None
+        shell.handle("help")
+        self.assertEqual(len(self.shown[-1].splitlines()), 2)       # an empty line, and the text as one paragraph

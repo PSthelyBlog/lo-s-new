@@ -188,6 +188,22 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
     counted.
 - **Open.** The count is of seconds only. A batch of lines put to the student does not say how
   many it has got through.
+- **Proposed.** At a terminal, each thing said is shown in its voice.
+  - A command about to run is bold, with where the choice came from dim after it.
+  - What a command itself printed is left exactly as it is, and so is code.
+  - What went wrong is red. The warning that a change cannot be undone is yellow.
+  - An aside is dim: what could be typed next, how to undo something, a wait, the greeting.
+  - Everything else lo-s says is plain.
+- **Proposed.** lo-s's own prose is broken between words to the width of the terminal, and to
+  100 columns at most. What follows a break is set under the start of the text: after the
+  number of a numbered line, or beside the name in a table. A command about to run stays on
+  one line, so that it can be copied. A text with a word too long for a line is left to the
+  terminal to break.
+- **Proposed.** The words are the same everywhere. Each voice is a kind of text (`los/say.py`)
+  that equals its plain words, so tests, pipes and `-c` away from a terminal see what they saw
+  before. `NO_COLOR` turns colour and weight off and leaves the breaking of lines.
+- **Open.** Only some messages have an aside marked in them. The others are said in one voice
+  from start to end.
 - **Proposed.** A typed line is not matched to the settled lines by likeness, with or without a
   model. It was measured (`experiments/rewording/`): the student gives a rewording the settled
   command and values as often as it gives them to the settled line itself, and a line with
@@ -696,6 +712,12 @@ improvements.
     `improve lines` took 44 seconds. Its text nearly filled their terminal, so the time stood
     alone on the next line. A text is now broken between words so that the count has room
     after it, and only a word too long to break still sends the count to a line of its own.
+- Voices and the breaking of lines (`los/say.py`, and `render`, `show` and `ask` in
+  `los/terminal.py`). Tried on 2026-10-11 in a pseudo-terminal at 72 and 92 columns, with a
+  stand-in for the student and a scratch record, and no model asked. A failure was red, the
+  question before a move started in yellow, and what could be typed next was dim. A listing and
+  a command's own output came out as before, and the descriptions in the table of `help` were
+  set one under the other. What was checked is the codes written, not the look on a screen.
 
 ## What the first build measured
 
