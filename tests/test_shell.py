@@ -2,9 +2,9 @@ import contextlib
 import io
 from unittest import mock
 
-from los import sandbox, shell
+from los import cases, sandbox, shell
 from los.sandbox import Result
-from tests.helpers import Folders, ShellCase, needs_sandbox
+from tests.helpers import NONE, Folders, ShellCase, needs_sandbox
 
 
 class ShellTest(ShellCase):
@@ -119,3 +119,40 @@ class MainTest(Folders):
             said = self.said("-c", "ok.go")
         self.assertIn("plugins/broken was left out", said)
         self.assertTrue(said.endswith("gone\n"))
+
+
+class StartTest(ShellCase):
+    def test_the_greeting_says_what_is_here_what_waits_and_where_paths_are_taken_from(self):
+        import os
+        home = os.path.expanduser("~")
+        with mock.patch("os.getcwd", return_value=home + "/work/site"):
+            self.assertEqual(self.shell().greeting(), "lo-s: 3 commands, working in ~/work/site.")
+            cases.queue("order a large pizza", "student")
+            self.assertEqual(self.shell().greeting(), "lo-s: 3 commands, 1 need waiting, working in ~/work/site.")
+        with mock.patch("os.getcwd", return_value="/srv/data"):
+            self.assertTrue(self.shell(commands={}).greeting().startswith("lo-s: 0 commands, 1 need waiting, working in /srv/data."))
+
+    def test_the_greeting_says_so_when_the_student_cannot_be_reached_and_only_then(self):
+        shell = self.shell()
+        self.student.down = lambda: None
+        self.assertEqual(len(shell.greeting().splitlines()), 1)
+        self.student.down = lambda: "nothing answers at http://127.0.0.1:8080/v1"
+        self.assertEqual(shell.greeting().splitlines()[1],
+                         "The student is not answering: nothing answers at http://127.0.0.1:8080/v1. If it is the local "
+                         "model, scripts/serve.sh starts it. Lines you settled and typed commands work without it.")
+        shell.student = None                                    # no model is set up to read plain language
+        self.assertEqual(len(shell.greeting().splitlines()), 1)
+
+    def test_a_wait_for_the_student_is_the_terminals_to_show_and_is_said_nowhere_else(self):
+        shell, waits = self.shell(NONE, NONE), []
+
+        @contextlib.contextmanager
+        def watch(text, kept):
+            waits.append((text, kept, len(self.shown)))
+            yield
+
+        shell.handle("order a large pizza")
+        shell.watch = watch
+        shell.handle("book a flight")
+        self.assertEqual(waits, [("Asking scripted", False, 1)])
+        self.assertFalse(any(said.startswith("Asking") for said in self.shown))

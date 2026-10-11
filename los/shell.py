@@ -28,6 +28,7 @@ judgement into code. `improve` lists what the records show could be better, and 
 for each.
 """
 import argparse
+import contextlib
 import datetime
 import os
 import pathlib
@@ -88,6 +89,12 @@ def several(things, most=6):
     return ", ".join(things[:-1]) + (" and " if len(things) > 1 else "") + things[-1]
 
 
+def tilde(path):
+    """A path with the home folder written as ~."""
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
+
+
 def reaching(stretch):
     """A stretch the way the user says it: from 91 days."""
     return f"{stretch['reach']} {stretch['question']['value']}"
@@ -116,9 +123,35 @@ class Shell:
         self.table, self.ask, self.out, self.runner, self.student = table, ask, out, run, student
         self.teacher, self.plugin_dir = teacher, plugin_dir
         self.edit = edit    # reads a line that starts out as a given text, where the terminal can do that
+        self.watch = None   # counts the seconds of a wait in place, where there is a terminal to do it on
         self.minds = judge.Minds(student, teacher, self.confirm)    # what a running command reaches a model through
         self.said = None    # the latest plain-language line, so that `means` can settle it
         self.last = None    # that line and the command chosen for it, so that `wrong` can take the choice back
+
+    def greeting(self):
+        """What a person is told when the shell starts: how much is here, what is waiting, the
+        folder a path that is not given in full is taken from, and that the student cannot be
+        reached when that is so. Finding that out takes a moment and asks the student nothing."""
+        waiting = len(cases.waiting())
+        said = (f"lo-s: {count(len(self.table), 'command')}, " + (f"{count(waiting, 'need')} waiting, " if waiting else "") +
+                f"working in {tilde(os.getcwd())}.")
+        down = self.student.down() if hasattr(self.student, "down") else None
+        return said + (f"\nThe student is not answering: {down}. If it is the local model, scripts/serve.sh starts "
+                       "it. Lines you settled and typed commands work without it." if down else "")
+
+    @contextlib.contextmanager
+    def wait(self, text, kept=True):
+        """Run a block that waits for a model or for commands in the sandbox. At a terminal the
+        seconds are counted beside `text` while it runs. A text that is not kept is one the user
+        sees only when the wait is long, and never anywhere else. Nothing may be said or asked
+        inside the block."""
+        if self.watch:
+            with self.watch(text, kept):
+                yield
+        else:
+            if kept:
+                self.out(text)
+            yield
 
     def handle(self, line):
         """Take one typed line through the steps above. Returns False when the shell should stop."""
@@ -202,7 +235,8 @@ class Shell:
                          "role a provider in los.toml, or type help to list the commands.")
                 return
             try:
-                choice = route.ask(self.student, self.table, line)
+                with self.wait(f"Asking {self.student.model}", kept=False):
+                    choice = route.ask(self.student, self.table, line)
             except ModelUnavailable as error:
                 self.out(f"That is not a command, and the student, which reads plain language, did not answer: {error}.\n"
                          "If it is the local model, scripts/serve.sh starts it. Structured commands still work; "
@@ -284,12 +318,7 @@ class Shell:
     def typed(self, command, args):
         """A command in full, as it will run: defaults filled in and every path absolute, with
         the home folder written as ~."""
-        home = os.path.expanduser("~")
-
-        def short(path):
-            return "~" + path[len(home):] if path == home or path.startswith(home + os.sep) else path
-
-        return render(command.name, {name: short(value) if command.params[name].path else value
+        return render(command.name, {name: tilde(value) if command.params[name].path else value
                                      for name, value in sandbox.complete(command, args).items()})
 
     def wrong(self):
@@ -372,11 +401,11 @@ class Shell:
                 return
         exchange, earlier = [], None    # what it asked and was told; a proposal of its own to put right
         while True:
-            self.out(f"Asking {self.teacher.model}{' again' if exchange or earlier else ''} about: {words}")
             record = {"date": datetime.date.today().isoformat(), "words": words, "model": self.teacher.model}
             try:
-                advice, meta = teach.ask(self.teacher, words, self.table,
-                                         {"student": self.student, "teacher": self.teacher}, EXAMPLE, exchange, earlier)
+                with self.wait(f"Asking {self.teacher.model}{' again' if exchange or earlier else ''} about: {words}"):
+                    advice, meta = teach.ask(self.teacher, words, self.table,
+                                             {"student": self.student, "teacher": self.teacher}, EXAMPLE, exchange, earlier)
             except (ModelUnavailable, RuntimeError) as error:
                 state.append("delegations", {**record, "failed": str(error)})
                 self.out(f"No answer came back that could be used: {error}")
@@ -459,15 +488,16 @@ class Shell:
         command, checks = found.command, proposal["checks"][:teach.MOST["checks"]]
         online = not command.hosts or self.confirm(
             f"Its checks would fetch from {', '.join(command.hosts)}. Let them?", default=False)
-        self.out(f"Running {count(len(checks), 'check')} of {command.name} in the sandbox.")
-        found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
+        with self.wait(f"Running {count(len(checks), 'check')} of {command.name} in the sandbox."):
+            found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
         if not self.student:
             found.untried = "No model is set up as the student."
             return
-        self.out(f"Trying {count(min(len(proposal['descriptions']), teach.MOST['descriptions']), 'description')} of it "
-                 f"on {self.student.model}.")
+        trying = (f"Trying {count(min(len(proposal['descriptions']), teach.MOST['descriptions']), 'description')} of it "
+                  f"on {self.student.model}.")
         try:
-            found.tried = teach.try_descriptions(self.student, self.table, command, proposal)
+            with self.wait(trying):
+                found.tried = teach.try_descriptions(self.student, self.table, command, proposal)
             teach.settle(found, found.tried[0][0], words, self.teacher, proposal)
         except ModelUnavailable as error:
             found.untried = f"The student did not answer ({error})."
@@ -577,10 +607,10 @@ class Shell:
         if not total:
             self.out("No command here came with example lines that are still the student's to answer.")
             return
-        self.out(f"Asking {self.student.model} {count(total, 'example line')} of {count(len(written), 'command')} "
-                 "a model wrote.")
         try:
-            results = improve.check(self.student, self.table)
+            with self.wait(f"Asking {self.student.model} {count(total, 'example line')} of "
+                           f"{count(len(written), 'command')} a model wrote."):
+                results = improve.check(self.student, self.table)
         except ModelUnavailable as error:
             self.out(f"The student did not answer: {error}.")
             return
@@ -787,8 +817,9 @@ class Shell:
                             "see where it draws the line? That is free.", default=True):
             return False
         try:
-            put = rules.spread(lambda value: self.minds.sample(command, name, question, value, choices), example,
-                               {value: answer for value, answer, _ in listed}, low, high)
+            with self.wait(f"Asking {self.student.model}", kept=False):
+                put = rules.spread(lambda value: self.minds.sample(command, name, question, value, choices), example,
+                                   {value: answer for value, answer, _ in listed}, low, high)
         except sandbox.Refused as refusal:
             self.out(f"That stopped early: {refusal}.")
             return False
@@ -837,13 +868,14 @@ class Shell:
             self.out(f"A rule for it is in use already, made from {current['cases']} answers on {current['date']}. "
                      "A new one would take its place.")
         while True:
-            self.out(f"Asking {self.teacher.model}{' again' if earlier else ''} for a rule from "
-                     f"{count(len(shown), 'answer')} on record for {name} in {command.name}. {len(held)} more "
-                     f"{'is' if len(held) == 1 else 'are'} held back to test it.")
+            asking = (f"Asking {self.teacher.model}{' again' if earlier else ''} for a rule from "
+                      f"{count(len(shown), 'answer')} on record for {name} in {command.name}. {len(held)} more "
+                      f"{'is' if len(held) == 1 else 'are'} held back to test it.")
             record = {"date": datetime.date.today().isoformat(), "command": command.name, "name": name,
                       "model": self.teacher.model}
             try:
-                output, meta = rules.ask(self.teacher, command, name, question, choices, shown, earlier)
+                with self.wait(asking):
+                    output, meta = rules.ask(self.teacher, command, name, question, choices, shown, earlier)
             except (ModelUnavailable, RuntimeError) as error:
                 state.append("rule_calls", {**record, "failed": str(error)})
                 self.out(f"No rule came back: {error}")
@@ -961,9 +993,13 @@ def main(argv=None):
 
     shell = Shell(table, student=role("student"), teacher=role("teacher"), plugin_dir=plugin_dir)
     read = input
-    if opts.line is None and sys.stdin.isatty() and sys.stdout.isatty():
-        from . import terminal      # history, completion and a line to correct, for a person at the prompt
-        read, shell.edit = terminal.start(lambda: shell.table, state.directory() / "history")
+    if sys.stdout.isatty():
+        from . import terminal
+        shell.watch = terminal.waiting      # someone is watching, so a wait is shown as it goes
+        if opts.line is None and sys.stdin.isatty():
+            # History, completion and a line to correct, for a person at the prompt.
+            read, shell.edit = terminal.start(lambda: shell.table, state.directory() / "history")
+            print(shell.greeting())
     while True:
         try:
             if not shell.handle(opts.line if opts.line is not None else read("lo-s> ")) or opts.line is not None:

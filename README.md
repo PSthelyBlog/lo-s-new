@@ -137,6 +137,9 @@ You need Linux and Python 3.11 or later. Nothing beyond the standard library is 
 That is enough for structured commands. `help` lists them, and `help NAME` explains one and says
 what it may touch. `./lo-s -c "LINE"` runs one line and exits.
 
+At a terminal, lo-s starts by saying how many commands it has, which folder it takes paths from,
+and whether the student can be reached. While it waits for a model it counts the seconds.
+
 **The sandbox** is made with bubblewrap (the `bwrap` program), which most distributions package.
 It was tried with version 0.12.0. Where it is missing or cannot build a sandbox, lo-s says so when
 it starts: the starter commands then run without one, and a command a model wrote does not run at

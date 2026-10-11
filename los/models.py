@@ -36,9 +36,13 @@ class ClaudeCli:
                 '--tools "" --no-session-persistence, with the message on standard input and the answer on '
                 "standard output")
 
+    def down(self):
+        """Why this model cannot be reached, or nothing when it can. Nothing is asked of it."""
+        return None if shutil.which("claude") else "the claude program is not installed"
+
     def complete(self, system, user, schema, limit=None):
-        if not shutil.which("claude"):
-            raise ModelUnavailable("the claude program is not installed")
+        if self.down():
+            raise ModelUnavailable(self.down())
         cmd = ["claude", "-p", "--safe-mode", "--model", self.model, "--effort", self.effort,
                "--tools", "", "--no-session-persistence", "--output-format", "json",
                "--system-prompt", system, "--json-schema", json.dumps(schema)]
@@ -73,6 +77,17 @@ class OpenAICompat:
 
     def describe(self):
         return f"{self.model}, behind the OpenAI chat API at {self.base_url}"
+
+    def down(self):
+        """Why this model cannot be reached, or nothing when it can. The server is asked which
+        models it has, which takes a moment, and the model is asked nothing."""
+        try:
+            urllib.request.urlopen(self.base_url + "/models", timeout=1).close()
+        except urllib.error.HTTPError as refusal:       # it answered, if only to refuse
+            refusal.close()
+        except (urllib.error.URLError, OSError):
+            return f"nothing answers at {self.base_url}"
+        return None
 
     def complete(self, system, user, schema, limit=None):
         body = {

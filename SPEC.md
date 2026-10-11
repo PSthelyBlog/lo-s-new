@@ -174,6 +174,20 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 - **Proposed.** Tab completes what is being typed: a command, its parameters, a path where a
   parameter names one, the shell's own words and what follows them, and a line the user has
   settled, from the word being typed on.
+- **Proposed.** When the shell starts at a terminal it says in a line how many commands there
+  are, how many needs are waiting, and which folder a path not given in full is taken from.
+  When the student cannot be reached it says so, and how to start it. It finds that out by
+  asking the server which models it has, waits a second at most, and asks the model nothing.
+- **Proposed.** While a model is waited for at a terminal, the seconds are counted in place.
+  - Where the shell says what it is asking (the teacher, a batch of lines for the student,
+    checks in the sandbox), that line stays, with the time it took after it. The text is broken
+    between words where that is needed for the count to have room on its last line.
+  - A plain-language line shows nothing unless the student takes more than a second and a
+    half, and what is shown is gone when the answer comes.
+  - Away from a terminal, and in what the tests see, the words are as before and nothing is
+    counted.
+- **Open.** The count is of seconds only. A batch of lines put to the student does not say how
+  many it has got through.
 - **Proposed.** A typed line is not matched to the settled lines by likeness, with or without a
   model. It was measured (`experiments/rewording/`): the student gives a rewording the settled
   command and values as often as it gives them to the settled line itself, and a line with
@@ -668,6 +682,20 @@ improvements.
   2026-10-11 in a scratch record with no model reachable: `need` and `stat` were asked about
   and Enter gave `needs` and `stats`, `status` was not asked about, and `delegate improve` and
   `delegate rule sys.health temperature` sent nothing without a yes.
+- The greeting and the count of a wait (`greeting` and `wait` in `los/shell.py`, `waiting` in
+  `los/terminal.py`, `down` in `los/models.py`). Tried on 2026-10-11 in a pseudo-terminal, with
+  a stand-in for the model server and a scratch record, and no model asked.
+  - The greeting named the student's address when nothing answered there, and said nothing of
+    the student when something did.
+  - A line the stand-in took 3 seconds over showed a count that was gone when the answer came.
+    One it took a fifth of a second over showed nothing.
+  - A `delegate` it took 4 seconds over kept its line, with the time after it. A text that
+    ended near the edge of 60 columns got the count on a line of its own.
+  - With the output piped, the words were as before.
+  - The owner's trial the same day, with the student: the greeting was one line, and
+    `improve lines` took 44 seconds. Its text nearly filled their terminal, so the time stood
+    alone on the next line. A text is now broken between words so that the count has room
+    after it, and only a word too long to break still sends the count to a line of its own.
 
 ## What the first build measured
 

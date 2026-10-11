@@ -404,6 +404,23 @@ class DelegateTest(Case):
         shell.handle("delegate trace the route to a host")
         self.assertEqual((self.asked, self.teacher.calls), ([], 2))
 
+    def test_the_wait_for_the_teacher_is_said_as_before_or_left_to_the_terminal_to_count(self):
+        import contextlib
+        waits = []
+
+        @contextlib.contextmanager
+        def watch(text, kept):
+            waits.append((text, kept))
+            yield
+
+        shell = self.shell({"answer": "cannot", "reason": "No."}, {"answer": "cannot", "reason": "No."})
+        shell.handle("delegate book a flight")
+        self.assertEqual(self.shown, ["Asking scripted-teacher about: book a flight", "lo-s cannot do this: No."])
+        shell.watch = watch
+        shell.handle("delegate book a flight")
+        self.assertEqual((waits, self.shown[2:]), ([("Asking scripted-teacher about: book a flight", True)],
+                                                   ["lo-s cannot do this: No."]))
+
     def test_a_queued_need_is_sent_by_its_number_whatever_its_words(self):
         number = cases.queue("improve", "student")
         shell = self.shell({"answer": "cannot", "reason": "No."})

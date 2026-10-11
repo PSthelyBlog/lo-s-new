@@ -9,10 +9,20 @@ Three things, all from Python's readline:
   and what follows them, and the lines the user has settled.
 - A line to correct: the shell can put a command on the input line for the user to change.
 
+And one thing that needs only a terminal to write to: a count of the seconds while a model is
+waited for.
+
 `complete` works out what could follow what has been typed and needs no terminal, so it is the
 part the tests cover.
 """
+import contextlib
 import os
+import shutil
+import sys
+import textwrap
+import threading
+import time
+import unicodedata
 
 from . import cases, rules
 from .parse import flag
@@ -20,6 +30,75 @@ from .parse import flag
 KEPT = 2000     # lines of history kept from one session to the next
 ALONE = ("wrong", "needs", "stats", "exit")                             # the shell's words that stand alone
 TAKING = ("help", "means", "forget", "delegate", "trace", "rule", "improve")    # and those that take more
+
+
+SOON = 1.5      # seconds a wait may last before a line that is not kept is shown at all
+ROOM = 14       # columns the count of seconds needs at the end of a line
+SAVE, BACK, CLEAR = "\x1b7", "\x1b8", "\x1b[K"     # note where the cursor is; go back there; clear to the end of the line
+
+
+def took(seconds):
+    return f"{seconds:.1f} s" if seconds < 10 else f"{seconds:.0f} s"
+
+
+def _columns(text):
+    """How many columns the last line of a text takes on the screen."""
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 0 if unicodedata.combining(char) else 1
+               for char in text.rpartition("\n")[2])
+
+
+@contextlib.contextmanager
+def waiting(text, kept=True, out=None, soon=SOON, every=1.0):
+    """Show that something is being waited for, and for how long: the seconds are counted in
+    place for as long as the block runs.
+
+    A line that is kept is written at once and stays as a record, with the time it took after
+    it, on the same line. One that is not kept appears only when the wait lasts longer than
+    `soon`, and is gone when the wait is over: a student that answers in a second leaves the
+    screen as it was.
+
+    Nothing else may be written or asked while the block runs."""
+    out = out or sys.stdout
+    width, started, over = shutil.get_terminal_size().columns, time.monotonic(), threading.Event()
+    shown = []
+
+    def write(*parts):
+        out.write("".join(parts))
+        out.flush()
+
+    if kept:
+        # The text is broken between words so that its last line has room for the count. Where a
+        # word too long to break leaves none, the count goes on a line of its own. The place is
+        # noted once, so a text of several lines is not written again.
+        text = "\n".join(row for line in text.split("\n") for row in textwrap.wrap(
+            line, max(width - ROOM, 20), break_long_words=False, break_on_hyphens=False) or [""])
+        used = _columns(text) % width
+        write(text, "" if 0 < used <= width - ROOM else "\n", SAVE)
+
+    def count():
+        if not kept and over.wait(soon):
+            return
+        while True:
+            seconds = f"  {time.monotonic() - started:.0f} s"
+            if kept:
+                write(BACK, seconds, CLEAR)
+            else:
+                write("\r", text[:max(width - ROOM, 0)], seconds, CLEAR)
+            shown.append(seconds)
+            if over.wait(every):
+                return
+
+    counting = threading.Thread(target=count, daemon=True)
+    counting.start()
+    try:
+        yield
+    finally:
+        over.set()
+        counting.join()
+        if kept:
+            write(BACK, f"  ({took(time.monotonic() - started)})", CLEAR, "\n")
+        elif shown:
+            write("\r", CLEAR)
 
 
 def complete(table, before, text):
