@@ -109,7 +109,10 @@ class OpenAICompat:
         except urllib.error.HTTPError as error:  # the server answered, and refused the request
             raise RuntimeError(f"{error.code} from {self.base_url}: {error.read().decode(errors='replace')[:300]}")
         except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
-            raise ModelUnavailable(f"no answer from {self.base_url} ({getattr(error, 'reason', error)})")
+            reason = getattr(error, "reason", error)
+            if isinstance(reason, ConnectionRefusedError):      # no server is there, which is the usual case
+                raise ModelUnavailable(f"nothing answers at {self.base_url}")
+            raise ModelUnavailable(f"no answer from {self.base_url} ({reason})")
         timings = reply.get("timings", {})
         return json.loads(reply["choices"][0]["message"]["content"]), {
             "seconds": round(time.time() - start, 2),

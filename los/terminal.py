@@ -104,9 +104,18 @@ def ask(question):
     *above, last = render(question, shutil.get_terminal_size().columns, coloured()).split("\n")
     if above:
         sys.stdout.write("\n".join(above) + "\n")
-    if "readline" in sys.modules:       # which has to be told what in a prompt takes no room on the screen
-        last = re.sub(r"(\x1b\[[0-9;]*m)", "\x01\\1\x02", last)
-    return input(last + (" " if question.endswith(" ") else ""))
+    editing = sys.modules.get("readline")
+    if not editing:
+        return input(last + (" " if question.endswith(" ") else ""))
+    last = re.sub(r"(\x1b\[[0-9;]*m)", "\x01\\1\x02", last)    # it has to be told what in a prompt takes no room
+    # An answer is not a line, and Tab has nothing to offer for one. With no completer at all,
+    # readline would offer the files of the folder.
+    held = editing.get_completer()
+    editing.set_completer(lambda text, state: None)
+    try:
+        return input(last + (" " if question.endswith(" ") else ""))
+    finally:
+        editing.set_completer(held)
 
 
 SOON = 1.5      # seconds a wait may last before a line that is not kept is shown at all
@@ -206,6 +215,16 @@ def complete(table, before, text):
     return _starting(text, [flag(name) + " " for name in command.params if name not in used])
 
 
+def offered(table, before, text):
+    """What Tab offers when a slash ends a part of a word as a space ends the word. `text` is then
+    only what follows the last slash, and `before` ends with the start of the word. Each
+    candidate is cut down to what takes the place of `text`, so a path is completed, and listed,
+    one name at a time and not with every folder that leads to it."""
+    lead = re.search(r"\S*\Z", before).group()      # what was typed of the word before the part Tab works on
+    return [one[len(lead):] for one in complete(table, before[:len(before) - len(lead)], lead + text)
+            if one.startswith(lead)]
+
+
 def _after(table, words):
     """What can follow one of the shell's own words, given what follows it already."""
     word, rest = words[0], words[1:]
@@ -280,14 +299,19 @@ def start(table, history):
     def completer(text, state):
         if state == 0:
             try:
-                found[:] = complete(table(), readline.get_line_buffer()[:readline.get_begidx()], text)
+                found[:] = offered(table(), readline.get_line_buffer()[:readline.get_begidx()], text)
             except Exception:       # a fault here must not take the prompt with it
                 found[:] = []
         return found[state] if state < len(found) else None
 
     readline.set_completer(completer)
-    readline.set_completer_delims(" \t\n")      # a word is what stands between spaces: fs.list, --sort-by, ~/a/b
+    # A word is what stands between spaces: fs.list, --sort-by, ~/a/b. Within one, Tab works on
+    # what follows the last slash, so that the names in a folder are listed without the folder.
+    readline.set_completer_delims(" \t\n/")
     readline.parse_and_bind("bind ^I rl_complete" if "libedit" in (readline.__doc__ or "") else "tab: complete")
+    # One Tab completes as far as it can and lists what is left to choose from. Left as it comes,
+    # readline lists only at the second Tab that changes nothing, which is the third after one that did.
+    readline.parse_and_bind("set show-all-if-ambiguous on")
 
     def read(prompt):
         line = input(prompt)

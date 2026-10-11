@@ -173,7 +173,9 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   lines and are kept out.
 - **Proposed.** Tab completes what is being typed: a command, its parameters, a path where a
   parameter names one, the shell's own words and what follows them, and a line the user has
-  settled, from the word being typed on.
+  settled, from the word being typed on. Within a path it works on one name at a time, so a
+  listing shows the names in a folder and not the folders that lead to them. One Tab completes
+  as far as the choices agree and lists them. At a question Tab offers nothing.
 - **Proposed.** When the shell starts at a terminal it says in a line how many commands there
   are, how many needs are waiting, and which folder a path not given in full is taken from.
   When the student cannot be reached it says so, and how to start it. It finds that out by
@@ -724,6 +726,16 @@ improvements.
   proposal the tests use, as a terminal of 92 columns shows it: twelve lines of code, then the
   ten lines the decision rests on, then the question. Not yet seen with a command the teacher
   wrote, which takes a call.
+- Two smaller things at the prompt, tried on 2026-10-11 in a pseudo-terminal with no model.
+  - Tab lists the names in a folder and no longer each path in full, which the owner's trial of
+    2026-10-09 had shown (`offered` in `los/terminal.py`: a slash ends a part of a word).
+  - A student that is not there is reported as nothing answering at its address, in place of
+    the system's own words for a refused connection (`los/models.py`). Any other failure to
+    reach it is still given as it came.
+  - The owner's trial the same day: the listing gave names only, and took three Tabs, because
+    the first completed a letter the two names shared. That is how the line editor comes. One
+    Tab now completes and lists. At a question, where a stray Tab would then have listed at
+    once, it offers nothing.
 
 ## What the first build measured
 

@@ -38,6 +38,25 @@ class CompleteTest(Folders):
         self.assertEqual(complete("", "tr"), ["trace "])
         self.assertEqual(len(complete("", "")), len(TABLE) + 11)
 
+    def test_within_a_word_tab_works_on_what_follows_the_last_slash(self):
+        for name in ("docs", "downloads"):
+            (self.files / name).mkdir()
+        (self.files / "docs" / "draft.txt").write_text("")
+        offered = lambda before, text: terminal.offered(TABLE, before, text)
+        # The word is the whole path. What is offered takes the place of its last part only.
+        self.assertEqual(offered(f"fs.list --path {self.files}/", "do"), ["docs/", "downloads/"])
+        self.assertEqual(offered(f"fs.list --path {self.files}/docs/", ""), ["draft.txt "])
+        self.assertEqual(offered(f"fs.list --path {self.files}/nowhere/", "x"), [])
+        self.assertEqual(offered("fs.list --path ", "~"), ["~/"])
+        # Where no slash was typed, it is as before.
+        self.assertEqual(offered("", "fs"), ["fs.list ", "fs.move "])
+        self.assertEqual(offered("fs.list ", "--p"), ["--path "])
+        self.assertEqual(offered("trace ", "sys"), ["sys.health "])
+        # A settled line with a slash in it is given from the last slash on.
+        cases.record("line", "what is the price/performance of this", {"command": "fs.list", "args": {}}, "student", "accepted")
+        self.assertEqual(offered("what is the ", "pri"), ["price/performance of this"])
+        self.assertEqual(offered("what is the price/", "perf"), ["performance of this"])
+
     def test_a_command_is_followed_by_its_own_parameters_once_each(self):
         self.assertEqual(complete("fs.list ", ""), ["--path ", "--sort-by "])
         self.assertEqual(complete("fs.list --path /tmp ", "--"), ["--sort-by "])
@@ -132,6 +151,8 @@ read, edit = terminal.start(lambda: table, pathlib.Path(sys.argv[1]))
 for step in sys.argv[2:]:
     if step == "line":
         print("GOT", repr(read("lo-s> ")))
+    elif step == "asked":
+        print("GOT", repr(terminal.ask("Sure? [y/N] ")))
     elif step == "question":
         print("GOT", repr(input("Run it? [Y/n] ")))
     else:
@@ -165,7 +186,7 @@ class TypingTest(Folders):
                 except OSError:     # the child has gone
                     break
 
-        prompts = {"line": b"lo-s> ", "question": b"Run it? [Y/n] "}
+        prompts = {"line": b"lo-s> ", "question": b"Run it? [Y/n] ", "asked": b"Sure? [y/N] "}
         waited = {}
         for what, keys in steps:
             prompt = prompts.get(what, b"Correct it: ")
@@ -175,7 +196,8 @@ class TypingTest(Folders):
         wait_for(b"DONE", 1)
         os.close(fd)
         os.waitpid(pid, 0)
-        return [eval(got) for got in re.findall(r"GOT (.*?)\r?\n", seen.decode())]
+        self.screen = seen.decode()
+        return [eval(got) for got in re.findall(r"GOT (.*?)\r?\n", self.screen)]
 
     def test_history_holds_the_lines_and_not_the_answers_and_lasts(self):
         got = self.typed(("line", "how much ram is free\n"), ("question", "y\n"), ("line", UP + "\n"),
@@ -191,6 +213,25 @@ class TypingTest(Folders):
         self.assertEqual(self.typed(("line", f"fs.l\t--p\t{self.files}/do\t\n")), [f"fs.list --path {self.files}/docs/"])
         cases.record("line", "how much ram is free", {"command": "fs.list", "args": {}}, "student", "accepted")
         self.assertEqual(self.typed(("line", "how m\t\n")), ["how much ram is free"])
+
+    def test_tab_lists_the_names_in_a_folder_and_not_the_folders_that_lead_to_them(self):
+        for name in ("docs", "downloads"):
+            (self.files / name).mkdir()
+        # One Tab completes as far as the names agree and lists them. Then c settles it.
+        got = self.typed(("line", f"fs.list --path {self.files}/\tc\t\n"))
+        self.assertEqual(got, [f"fs.list --path {self.files}/docs/"])
+        self.assertRegex(self.screen, r"docs/\s+downloads/")
+        self.assertNotIn(f"{self.files}/downloads", self.screen)
+
+    def test_tab_offers_nothing_at_a_question(self):
+        (self.files / "visible.txt").write_text("")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.files)
+        got = self.typed(("asked", "\ty\n"), ("line", "fs.l\t\n"))
+        self.assertEqual(got, ["y", "fs.list "])                # and it completes again at the next line
+        asked = self.screen.partition("lo-s> ")[0]
+        self.assertNotIn("fs.list", asked)                      # neither a command
+        self.assertNotIn("visible.txt", asked)                  # nor a file of the folder
 
     def test_a_line_to_correct_starts_out_filled_in(self):
         got = self.typed(("fs.list --path home", "\x7f" * 4 + "~\n"), ("line", UP + "\n"))

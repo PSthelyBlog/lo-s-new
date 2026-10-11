@@ -64,6 +64,11 @@ class ReachTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         self.assertIsNone(OpenAICompat(f"http://127.0.0.1:{server.server_port}/v1", "m").down())
         self.assertEqual(OpenAICompat("http://127.0.0.1:9/v1/", "m").down(), "nothing answers at http://127.0.0.1:9/v1")
+        with self.assertRaisesRegex(ModelUnavailable, r"^nothing answers at http://127\.0\.0\.1:9/v1$"):
+            OpenAICompat("http://127.0.0.1:9/v1/", "m").complete("", "", {})       # asked, it says the same
+        with mock.patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
+            with self.assertRaisesRegex(ModelUnavailable, r"^no answer from http://slow/v1 \(timed out\)$"):
+                OpenAICompat("http://slow/v1", "m").complete("", "", {})
 
     def test_the_claude_program_is_there_or_not(self):
         with mock.patch("shutil.which", return_value=None):

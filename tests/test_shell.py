@@ -100,7 +100,8 @@ class MainTest(Folders):
         settings.write_text('[roles]\nstudent = "none-there"\n[providers.none-there]\nkind = "openai"\n'
                             'url = "http://127.0.0.1:9/v1"\nmodel = "m"\n')
         with mock.patch.dict("os.environ", {"LOS_CONFIG": str(settings)}):
-            self.assertIn("the student, which reads plain language, did not answer: no answer from http://127.0.0.1:9/v1",
+            self.assertIn("the student, which reads plain language, did not answer: nothing answers at "
+                          "http://127.0.0.1:9/v1.\n",
                           self.said("-c", "what is in this folder"))
         with mock.patch.dict("os.environ", {"LOS_CONFIG": str(self.root / "missing.toml")}):
             self.assertIn("no model is set up to read plain language", self.said("-c", "what is in this folder"))
