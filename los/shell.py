@@ -93,6 +93,23 @@ def reaching(stretch):
     return f"{stretch['reach']} {stretch['question']['value']}"
 
 
+def slip(word):
+    """The word of lo-s itself that a typed word is one slip away from: a letter missing, one too
+    many or a wrong one, two next to each other swapped, or other capitals. Nothing for one of
+    those words as it stands, or for a word further off."""
+    typed = word.lower()
+
+    def near(own):
+        if len(typed) == len(own):
+            at = [place for place in range(len(own)) if typed[place] != own[place]]
+            return (word != own if not at else len(at) == 1 or
+                    len(at) == 2 and at[1] == at[0] + 1 and typed[at[0]] == own[at[1]] and typed[at[1]] == own[at[0]])
+        short, longer = sorted((typed, own), key=len)
+        return len(longer) - len(short) == 1 and any(longer[:place] + longer[place + 1:] == short
+                                                     for place in range(len(longer)))
+    return next((own for own in (*BUILTINS, "quit") if near(own)), None)
+
+
 class Shell:
     def __init__(self, table, ask=input, out=print, run=sandbox.run, student=None, teacher=None, plugin_dir=None,
                  edit=None):
@@ -140,8 +157,22 @@ class Shell:
             if parsed:
                 self.run_typed(*parsed)
             else:
+                meant = self.meant(line)
+                if meant:
+                    return self.handle(meant)
                 self.interpret(line)
         return True
+
+    def meant(self, line):
+        """A line of one word that is one slip away from a word of lo-s itself is likely that word
+        mistyped. Read as plain language it reaches no command and is queued as a need. So the
+        user is asked, and the word is returned when they say they meant it. A line they settled
+        is theirs and is not questioned, nor is a word a command is named with, such as status."""
+        named = {part for name in self.table for part in name.split(".")}
+        plain = len(line.split()) != 1 or line.lower() in named or cases.remembered(line, self.table)
+        near = None if plain else slip(line)
+        return near if near and self.confirm(f"Did you mean {near}? Otherwise \"{line}\" is read as plain language.",
+                                             default=True) else None
 
     def run_typed(self, command, args):
         if command.effect == "destructive":
@@ -328,6 +359,17 @@ class Shell:
         if not self.teacher or not self.plugin_dir:
             self.out("No model is set up as the teacher. Give the teacher role a provider in los.toml.")
             return
+        first, *rest = words.split()
+        if number is None and first in BUILTINS and (
+                not rest or rest[0] in self.table or rest[0] in BUILTINS or rest[0].isdigit() or rest[0] == "lines"):
+            # What follows delegate is something lo-s does itself. Sent as it is, the teacher gets
+            # a bare word for a need and can only ask what was meant, which is a call spent.
+            self.out(f"{first} is one of lo-s's own words: typed without delegate, lo-s acts on it itself. "
+                     f"help {first} says what it does.")
+            if not self.confirm(f"Send \"{words}\" to {self.teacher.model} as something you need all the same? "
+                                "That is one call.", default=False):
+                self.out("Not sent.")
+                return
         exchange, earlier = [], None    # what it asked and was told; a proposal of its own to put right
         while True:
             self.out(f"Asking {self.teacher.model}{' again' if exchange or earlier else ''} about: {words}")

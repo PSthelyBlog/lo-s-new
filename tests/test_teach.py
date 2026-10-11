@@ -382,6 +382,34 @@ class DelegateTest(Case):
             self.assertTrue(self.shown[-1].startswith("Usage: delegate "))
         self.assertEqual(self.teacher.calls, 2)
 
+    def test_what_lo_s_does_itself_is_not_sent_to_the_teacher_without_a_clear_yes(self):
+        shell = self.shell(answers=[""])
+        shell.handle("delegate improve")
+        self.assertEqual(self.shown, ["improve is one of lo-s's own words: typed without delegate, lo-s acts on it "
+                                      "itself. help improve says what it does.", "Not sent."])
+        self.assertEqual(self.asked, ['Send "improve" to scripted-teacher as something you need all the same? That is '
+                                      "one call. [y/N] "])
+        for words in ("improve lines", "rule sys.health temperature", "forget 3", "help trace", "needs"):
+            shell.handle(f"delegate {words}")                   # nobody is there to answer, so nothing is sent
+            self.assertEqual(self.shown[-1], "Not sent.", words)
+        self.assertEqual((self.teacher.calls, state.read("delegations")), (0, []))
+        shell = self.shell({"answer": "cannot", "reason": "It says too little."}, answers=["y"])
+        shell.handle("delegate improve")
+        self.assertEqual((self.teacher.calls, self.shown[-2:]), (1, ["Asking scripted-teacher about: improve",
+                                                                     "lo-s cannot do this: It says too little."]))
+
+    def test_words_that_only_start_like_a_word_of_lo_s_are_sent_as_they_are(self):
+        shell = self.shell({"answer": "cannot", "reason": "No."}, {"answer": "cannot", "reason": "No."})
+        shell.handle("delegate help me rename my photos")
+        shell.handle("delegate trace the route to a host")
+        self.assertEqual((self.asked, self.teacher.calls), ([], 2))
+
+    def test_a_queued_need_is_sent_by_its_number_whatever_its_words(self):
+        number = cases.queue("improve", "student")
+        shell = self.shell({"answer": "cannot", "reason": "No."})
+        shell.handle(f"delegate {number}")
+        self.assertEqual((self.asked, self.teacher.calls), ([], 1))
+
     def test_its_question_is_put_to_the_user_and_the_answer_goes_back(self):
         shell = self.shell({"answer": "ask", "reason": "A forecast is for a place.", "question": "Which town?"},
                            {"answer": "ask", "reason": "r", "question": "Which country is that in?"}, answers=["Lyon", ""])

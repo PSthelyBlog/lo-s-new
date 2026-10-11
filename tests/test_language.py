@@ -514,3 +514,54 @@ class AlikeTest(ShellCase):
         shell.handle("wrong")
         shell.handle("whats in my home folder")
         self.assertEqual((len(self.asked), self.shown[-1][:28]), (3, "Nothing here does that yet. "))
+
+
+class OwnWordTest(ShellCase):
+    """A line of one word that is nearly a word of lo-s itself."""
+
+    def test_one_slip_from_a_word_of_lo_s_is_asked_about_and_yes_does_what_that_word_does(self):
+        cases.queue("order a large pizza", "student")
+        shell = self.shell(answers=[""])
+        shell.handle("need")
+        self.assertEqual(self.asked, ['Did you mean needs? Otherwise "need" is read as plain language. [Y/n] '])
+        self.assertRegex(self.shown[-1], r"^1\. order a large pizza")
+        self.assertEqual((self.student.calls, state.read("cases"), sorted(cases.waiting())), (0, [], [1]))
+
+    def test_which_words_are_one_slip_away(self):
+        from los.shell import slip
+        near = {"need": "needs", "stat": "stats", "hlep": "help", "exti": "exit", "trce": "trace", "improved": "improve",
+                "Needs": "needs", "qiut": "quit", "wrnog": "wrong", "delgate": "delegate"}
+        self.assertEqual({word: slip(word) for word in near}, near)
+        for word in ("needs", "quit", "delete", "weather", "hello", "ls", "helpme", "hpel"):
+            self.assertIsNone(slip(word), word)
+
+    def test_a_mistyped_exit_leaves_and_a_mistyped_help_helps(self):
+        shell = self.shell(answers=["y", "y"])
+        self.assertFalse(shell.handle("exti"))
+        self.assertTrue(shell.handle("hlep"))
+        self.assertIn("Type a command as NAME --parameter value", self.shown[-1])
+
+    def test_no_reads_the_word_as_plain_language_and_so_does_nobody_there_to_answer(self):
+        shell = self.shell(NONE, NONE, answers=["n"])
+        shell.handle("need")
+        self.assertEqual((self.student.calls, self.shown[-1][:28]), (1, "Nothing here does that yet. "))
+        shell.handle("stat")                                    # the question hits end of input
+        self.assertEqual((self.student.calls, sorted(cases.waiting())), (2, [1, 2]))
+
+    def test_a_word_a_command_is_named_with_a_settled_line_and_a_word_further_off_are_not_asked_about(self):
+        commands = table(("sys.status", [], "read"))
+        shell = self.shell(call("sys.status"), call("sys.status"), NONE, answers=["", "n", ""], commands=commands)
+        shell.handle("status")                                  # one letter from stats, and what sys.status is named with
+        self.assertEqual(self.asked, ["Run it? [Y/n] "])
+        shell.handle("state")                                   # one letter from stats: asked about once, and settled
+        shell.handle("state")
+        self.assertEqual(self.asked[1:], ['Did you mean stats? Otherwise "state" is read as plain language. [Y/n] ',
+                                          "Run it? [Y/n] "])
+        self.assertEqual(self.shown[-2:], ["→ sys.status  (remembered)", "ran sys.status"])
+        shell.handle("weather")
+        self.assertEqual((len(self.asked), self.shown[-1][:28]), (3, "Nothing here does that yet. "))
+
+    def test_a_line_of_several_words_is_plain_language_whatever_it_starts_with(self):
+        shell = self.shell(NONE)
+        shell.handle("need a way to resize pictures")
+        self.assertEqual((self.asked, self.student.calls), ([], 1))

@@ -131,6 +131,11 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   5. The student finds nothing. When a settled line is alike enough, its command is offered.
      Otherwise, or when the user says no, the line is queued as a need. A need keeps its number
      for good, and a line that is waiting already is not queued a second time.
+- **Proposed.** A line of one word that is one slip away from one of the shell's own words is
+  likely that word mistyped: a letter missing, one too many or a wrong one, two swapped, or
+  other capitals. Before the student is asked, the user is asked whether they meant that word.
+  Enter says yes. No reads the line as plain language, as before. A line they settled is not
+  asked about, nor is a word a command is named with, such as `status`.
 - **Proposed.** What is shown before a question is the command in full: a path left out is filled
   in, and every path is absolute, with the home folder written as `~`. That line is what will
   run and all that the command can touch. What is remembered is what was said, so a relative
@@ -204,7 +209,8 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 - **Open.** A path with a space in it completes once, written the way the shell reads it, and Tab
   cannot go on inside it.
 - **Open.** A line the student finds nothing for and that is like no settled line is queued
-  without a question, so a typing mistake lands in the queue too. `forget` drops it.
+  without a question, so a typing mistake lands in the queue too. `forget` drops it. Only a
+  one-word slip of one of the shell's own words is caught before that.
 
 ## The teacher step
 
@@ -212,6 +218,11 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   `delegate NUMBER` a queued need. One call gives one of four answers: **run** a command that
   exists, **write** a new one, **ask** one question, or **cannot**, with the reason. There is no
   separate step for writing.
+- **Proposed.** `delegate` followed by something lo-s does itself, such as `delegate improve` or
+  `delegate rule COMMAND NAME`, is not sent as it stands: the teacher would get a bare word for
+  a need and could only ask what was meant. lo-s says the word is its own and asks before the
+  call, and only a clear yes sends it. Words that merely start like one, such as "help me
+  rename my photos", are sent as they are. So is a queued need sent by its number.
 - **Proposed.** The teacher is told how lo-s works, the contract for commands, the command
   table, which models fill which role and how they are reached, and one plugin as an example of
   the style. It returns text only.
@@ -641,6 +652,22 @@ improvements.
   repository holds, a structured command ran, and the routing report was the same as before.
   A plain-language line said the student did not answer and named `serve.sh`, which named
   `setup.sh`.
+- The owner's own use on 2026-10-10 and 11, with their own record and eight teacher calls.
+  - Three calls each wrote a command: a rain check for the coming hours, a script that installs
+    a program, and a web search. Four requests got cannot, and one got a question back. The
+    student then reached each new command, and the accepted lines were remembered.
+  - With the three installed, one example line of `fs.copy` went to `fs.move`, and `improve`
+    said so. The line that had missed on 2026-10-08 now reached `fs.copy`. Settled with
+    `means`, the lost line was left out of the next check, which asked 38 lines of 7 commands
+    and found that every one reached its command.
+  - With the student stopped, two remembered lines ran and a new one said that the student did
+    not answer. A command that creates a file refused to write where one already was.
+  - Two things went wrong. `need`, typed for `needs`, went to the student and was queued as a
+    need. `delegate improve` spent a call on the bare word, and the teacher asked what was meant.
+- Guards for both (`slip` and `meant` in `los/shell.py`, and the start of `delegate`). Tried on
+  2026-10-11 in a scratch record with no model reachable: `need` and `stat` were asked about
+  and Enter gave `needs` and `stats`, `status` was not asked about, and `delegate improve` and
+  `delegate rule sys.health temperature` sent nothing without a yes.
 
 ## What the first build measured
 
