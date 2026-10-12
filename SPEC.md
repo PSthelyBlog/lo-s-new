@@ -841,6 +841,12 @@ improvements.
   service was not run, no key being set. All 10 of its lines went where they belong.
   Installed, it said what to type to give it its key. Against the service itself it has not
   been run: that takes a real key.
+- The owner's own use the same day, with one teacher call, closed that gap. `repair` on their
+  command that searched the web, with one failed run on record, got a new version on a search
+  service that wants a key, where the same request two commits earlier had got cannot. The
+  screen showed the change of host against what the installed command was held to. Replaced,
+  the command said that no key was set, the owner gave one with `key`, and the next run
+  listed five results from the service.
 
 ## What the first build measured
 
