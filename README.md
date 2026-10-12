@@ -122,6 +122,9 @@ their own lines are, the teacher turns that into a rule, and in the end no model
   can take back.
   `rule` has the teacher turn the answers on record into a small function, which is tried on
   every one of them before you are asked to use it.
+- **A written command that stops working can be sent back.** lo-s keeps how each run ended.
+  `repair NAME` shows the teacher the command and what went wrong; its new version is tried,
+  run on what failed, and takes the old one's place only if you agree. The old one is kept.
 - **`improve` lists what the records show could be better**: something you keep asking for, a
   written command that keeps failing, a line the student keeps getting wrong, a judgement a rule
   could make. Each comes with what to type and what it costs. lo-s proposes and you decide.
@@ -176,6 +179,7 @@ wants to put to it.
 | `means COMMAND --param value` | Says what the latest plain-language line means. It is remembered. |
 | `needs`, `forget NUMBER` | Lists the lines nothing could do yet, or drops one. |
 | `delegate WORDS`, `delegate NUMBER` | Asks the teacher about what you want, or about a queued need. |
+| `repair COMMAND` | Asks the teacher to put right a command it wrote. What you find wrong may follow the name. |
 | `trace` | Shows the judgements of the latest run and where each answer came from. |
 | `trace NUMBER ANSWER` | Sets one of them yourself. Yours comes first from then on. |
 | `trace COMMAND NAME` | Shows every answer on record for one judgement, and the stretches you set. |
@@ -265,6 +269,9 @@ lo-s runs commands on your real machine.
   - by `delegate`: your words, the command table, which models your machine is set up with and
     how they are reached, and one starter plugin as an example. When you send a proposal back,
     also what went wrong with it.
+  - by `repair`: the same, with the command as the teacher wrote it, what you say is wrong with
+    it, and what its latest runs said when they failed, with the values you gave them. You are
+    shown that list before it is sent.
   - by `rule`: the command's name and description, the question, the answers on record, and the
     values at which stretches you set start and stop.
   - by a command that asks the teacher: its question, which you are shown before every call.

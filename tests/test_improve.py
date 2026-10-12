@@ -257,8 +257,8 @@ class FailingTest(Folders):
         today = datetime.date.today().isoformat()
         self.assertEqual((found.text, found.do, found.cost, found.times), (
             f'web.search failed the last 2 times it ran, since {today}, each time saying: "{REFUSED}". A model wrote '
-            "it, so the fault may be in the command or in what it reaches. help web.search says what that is.",
-            "help web.search", "", 2))
+            "it, so the teacher can be shown what went wrong and asked to put it right.",
+            "repair web.search", "one call to the teacher", 2))
         self.ran(query="ducks")                                 # it works again, and what went before is over
         self.assertEqual(improve.failing(self.table), [])
 
@@ -274,8 +274,28 @@ class FailingTest(Folders):
             self.ran("fs.list", said="/nope is not a directory", path="/nope")
             self.ran("old.thing", said="it is gone")
             self.ran(said=REFUSED, query="x")
-        self.assertEqual([found.do for found in improve.failing(self.table)], ["help web.search"])
+        self.assertEqual([found.do for found in improve.failing(self.table)], ["repair web.search"])
         self.assertEqual(improve.failing(TABLE), [])
+
+    def test_a_command_that_was_replaced_starts_anew_and_one_the_teacher_cannot_put_right_is_left_out(self):
+        self.ran(said=REFUSED, query="a")
+        self.ran(said=REFUSED, query="b")
+        improve.replaced("web.search")                          # what the one before did says nothing about this one
+        self.assertEqual((improve.failing(self.table), improve.streak("web.search")), ([], []))
+        self.ran(said=REFUSED, query="c")
+        self.ran(said=REFUSED, query="d")
+        self.assertEqual([run["args"]["query"] for run in improve.streak("web.search")], ["d", "c"])
+        self.assertEqual(len(improve.failing(self.table)), 1)
+        at = datetime.datetime.now().isoformat(timespec="seconds")
+        state.append("delegations", {"repair": "web.search", "at": at, "answer": {"answer": "cannot", "reason": "No."}})
+        self.assertEqual(improve.failing(self.table), [])       # it said so, and asking again is another call
+        self.ran(said=REFUSED, query="e")
+        self.assertEqual(improve.failing(self.table), [])
+        self.ran(query="f")                                     # it worked, so what fails after this is new
+        for second, query in enumerate("gh"):                   # later than the teacher's answer, which a test cannot wait for
+            state.append("runs", {"at": f"9999-01-01T00:00:0{second}", "command": "web.search", "ok": False, "broke": False,
+                                  "args": {"query": query}, "said": REFUSED})
+        self.assertEqual(len(improve.failing(self.table)), 1)
 
     def test_the_shell_keeps_every_run_and_improve_lists_the_command(self):
         shown = []
@@ -287,4 +307,4 @@ class FailingTest(Folders):
                          [(True, None), (False, {"query": "headlines"}), (False, {"query": "news"})])
         shell.handle("improve")
         self.assertTrue(shown[-2].startswith("1. web.search failed the last 2 times it ran, since "))
-        self.assertTrue(shown[-2].endswith("\n   help web.search   (free)"))
+        self.assertTrue(shown[-2].endswith("\n   repair web.search   (one call to the teacher)"))

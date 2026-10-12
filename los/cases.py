@@ -241,7 +241,8 @@ def queue(line, by):
 def teacher_said():
     """The kind of answer the teacher last gave to each thing it was asked through delegate:
     run, write, ask or cannot, by the words it was asked about."""
-    return {call["words"]: call["answer"]["answer"] for call in state.read("delegations") if "answer" in call}
+    return {call["words"]: call["answer"]["answer"] for call in state.read("delegations")
+            if "answer" in call and "repair" not in call}
 
 
 def drop(number):

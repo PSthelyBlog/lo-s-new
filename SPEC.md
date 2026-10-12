@@ -292,6 +292,30 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   to it. This wording has not been tried on the teacher yet.
 - **Proposed.** The teacher is told never to write a catch-all command, and never to contact a
   service to find out where the user is.
+- **Proposed.** The teacher is told to fetch only from what is published for programs to read:
+  an API that needs no key, a feed, a file offered for download. A page made for people may
+  refuse a program on any day, and the command then stops working. When nothing published for
+  programs gives what is needed without an account or a key, it is to answer cannot and say
+  what is missing. For a command that fetches, its reason names the service it relies on.
+- **Proposed.** `repair COMMAND` sends an installed command a model wrote back to the teacher,
+  for one call. What the user finds wrong may follow the name, in their own words.
+  - The teacher is shown what `delegate` shows it, and besides: the command as it gave it,
+    which its folder keeps; what its latest runs said when they failed, three at most, with the
+    values they were given; and the user's words. The user sees that list before it is sent,
+    because the values are their own.
+  - It answers with the whole command again under the same name, with a question, or with
+    cannot and what is missing. A command under another name is not taken.
+  - A new version gets the free trial any proposal gets. For a command that only reads, the
+    runs that failed are run again with the new code, and the user sees how each went.
+  - What the new version may touch is shown against what the installed one is held to, when
+    the two differ.
+  - On a yes it takes the place of the old one, which is moved into `state/replaced/` and not
+    deleted. How the old one fared no longer counts against the new one.
+  - A cannot leaves the command as it is, and `improve` does not raise it again until it has
+    worked again.
+- **Open.** A version that was replaced is put back only by moving its folder by hand.
+- **Open.** A command that changes something is not run again on the values that failed, since
+  they are the user's own. Its new version is judged by its checks and its lines alone.
 
 ## Judgements
 
@@ -437,8 +461,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
   - **a need that keeps being asked**: a waiting line the student found nothing for twice or
     more. What the teacher already turned down is left out.
   - **a written command that keeps failing**: one a model wrote whose two latest runs or more
-    all ended in a fault, however often it worked before. One that works again is no longer
-    raised, and a starter command never is: nothing here could put it right.
+    all ended in a fault, however often it worked before. What to type is `repair` with its
+    name. One that works again is no longer raised. A starter command never is: it is not the
+    teacher's to put right. Nor is one the teacher has said it cannot put right.
   - **a line the student keeps getting wrong**: a line it answered twice or more with none of
     its answers standing.
   - **a judgement that deserves a rule**: one the student was asked in a run, when enough is on
@@ -467,9 +492,6 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Proposed.** How each run of a command ended is recorded in `state/runs.jsonl`: that it went
   well, or the values it was given and what it said when it did not. What a run that went well
   printed is not kept. That record is what the finder of failing commands reads.
-- **Open.** A command that keeps failing is raised, and nothing puts it right yet. An installed
-  command cannot be replaced, and the teacher is shown neither a command's code nor what went
-  wrong with it. Letting it put a written command right is the step this one prepares.
 - **Open.** The finder cannot tell a command at fault from a request that cannot be met, such
   as a file that already exists. Both are runs that failed, and it says so in either case.
 - **Open.** A line gone astray has no cure but `means` for that one line. The candidate
@@ -755,6 +777,29 @@ improvements.
   same day in a scratch record with no model: a written command that refused twice was listed
   by `improve` after the second time and not after the first, and a starter command that
   failed twice was not listed.
+- Putting an installed command right (`repair` and `consult` in `los/shell.py`, `again`,
+  `replace` and the `mending` of `ask` in `los/teach.py`, `streak` and `replaced` in
+  `los/improve.py`), and two sentences more in the teacher's brief. Tested with a scripted
+  teacher and the real sandbox: a command that failed twice was sent back with what its runs
+  had said, its new version ran the two failed runs again and both worked, and on a yes it
+  took the old one's place, the old one kept. A version that still failed could be sent back,
+  one under another name was not taken, and a cannot left the command alone and out of
+  `improve`.
+- Tried on 2026-10-12 in scratch folders, with one teacher call: a copy of the command that
+  searches the web, with two failed runs on record. The user was shown what would be sent. The
+  teacher answered cannot in 20 seconds. Its reason: the fault is in what the command reaches
+  and not in its code, since that page is made for browsers and refuses programs, and every
+  web search published for programs needs an account and a key, which a command cannot have.
+  The command stayed as it was and `improve` no longer raised it.
+- Tried again the same day, with one more call, on a copy of the command that says whether it
+  will rain, broken on purpose: it asked its service for a figure under a name the service
+  does not have. Two real runs failed with the service's refusal, and `improve` listed it.
+  - The teacher gave the whole command again under the same name in 34 seconds. Its reason
+    named the figure that was wrong and the service the command relies on.
+  - With the network allowed, its 5 checks passed, both failed runs worked with the new code,
+    and 10 of its 10 lines went where they belong.
+  - On a yes it took the old one's place, and the old one was kept. Run for real it answered,
+    and `improve` raised nothing. All of it took 78 seconds.
 
 ## What the first build measured
 

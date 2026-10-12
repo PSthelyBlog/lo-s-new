@@ -99,7 +99,12 @@ DATA (from los import DATA), for what it keeps between runs.
 - hosts: host names the command may fetch from. fetch(url), from los, returns the text of an \
 https GET to a listed host. Anything else is refused, and there is no other network. List only \
 the hosts the command needs for what the user asked. Never contact a service to find out where \
-the user is or who they are: take a place or a name as a parameter.
+the user is or who they are: take a place or a name as a parameter. Fetch only from what is \
+published for programs to read: an API that needs no key, a feed, a file offered for download. \
+Do not build on a page made for people to read in a browser: it may refuse a program on any day, \
+and the command then stops working. If nothing published for programs gives what is needed \
+without an account or a key, answer cannot and say what is missing. For a command that fetches, \
+name in reason the service it relies on.
 - judges: the names of the judgements the command asks for. judge(name, question, value, \
 choices), from los, returns the one of choices that fits value. It is for a judgement that no \
 code can make, such as whether a reading is worrying, and never for what code can work out. \
@@ -200,7 +205,8 @@ SCHEMA = {
         },
     },
 }
-MOST = {"descriptions": 3, "lines": 6, "others": 4, "checks": 6}   # how much of a proposal is tried
+# How much of a proposal is tried, and how many runs that failed are shown to the teacher and run again.
+MOST = {"descriptions": 3, "lines": 6, "others": 4, "checks": 6, "runs": 3}
 
 
 @dataclasses.dataclass
@@ -222,13 +228,16 @@ class Found:
     checks: list = dataclasses.field(default_factory=list)      # (what was run, "" or what went wrong)
     tried: list = dataclasses.field(default_factory=list)       # (description, lines right, lines tried, misses)
     untried: str = ""                   # why the descriptions were not tried on the student
+    again: list = dataclasses.field(default_factory=list)       # for a command put right: (a run that failed, "" or how it fails still)
 
     def failures(self):
         """Everything that went wrong, as sentences."""
         if self.fault:
             return [self.fault]
-        return [f"The check {what} {problem}" for what, problem in self.checks
-                if problem and not problem.startswith("was not run")] + (self.tried[0][3] if self.tried else [])
+        return ([f"The check {what} {problem}" for what, problem in self.checks
+                 if problem and not problem.startswith("was not run")] + (self.tried[0][3] if self.tried else []) +
+                [f"Run again as {what}, it {problem}" for what, problem in self.again
+                 if problem and not problem.startswith("was not run")])
 
 
 def _args(listed):
@@ -249,10 +258,12 @@ def setup(roles):
     return "\n".join(f"{role}: {model.describe()}" for role, model in roles.items() if model)
 
 
-def ask(teacher, words, table, roles, example=None, exchange=(), earlier=None):
+def ask(teacher, words, table, roles, example=None, exchange=(), earlier=None, mending=None):
     """One call to the teacher about what the user wants. `exchange` holds the questions it asked
     before and the user's answers. `earlier` is a proposal of its own and what was found wrong
-    with it, when it is asked to put that right. Returns (advice, what the call took)."""
+    with it, when it is asked to put that right. `mending` is (the name of an installed command
+    of its own that its answer is to take the place of, whether `earlier` is that command and
+    what went wrong in use). Returns (advice, what the call took)."""
     system = (BRIEF + "\nThe models this machine is set up with. The student reads plain-language lines; "
               "the teacher is you.\n" + setup(roles) +
               "\n\nCommands, one per line as: name | what it does | parameters\n" + route.table_text(table))
@@ -265,10 +276,21 @@ def ask(teacher, words, table, roles, example=None, exchange=(), earlier=None):
         user += f"\n\nYou asked: {question}\nThe user answered: {reply}"
     if earlier:
         proposal, failures = earlier
-        user += ("\n\nYou proposed this command for it:\n" + json.dumps(proposal, ensure_ascii=False, indent=1) +
-                 "\n\nlo-s tried it, and this is what went wrong:\n" + "\n".join(f"- {failure}" for failure in failures) +
-                 "\n\nGive the whole command again with that put right. If a check or a line of yours was at "
-                 "fault and not the command, put that right instead.")
+        name, in_use = mending or ("", False)
+        given, wrong = json.dumps(proposal, ensure_ascii=False, indent=1), "\n".join(f"- {failure}" for failure in failures)
+        if in_use:
+            user += (f"\n\nYou wrote the command {name} for it, and the user installed it. This is the command as you "
+                     f"gave it:\n{given}\n\nIn use, this is what went wrong:\n{wrong}\n\nPut it right: give the whole "
+                     "command again in write. If the fault lies in what the command reaches and not in its code, have "
+                     "it reach something that works for a program. If nothing a command may use puts it right, "
+                     "answer cannot and say what is missing.")
+        else:
+            user += (f"\n\nYou proposed this command for it:\n{given}\n\nlo-s tried it, and this is what went wrong:\n"
+                     f"{wrong}\n\nGive the whole command again with that put right. If a check or a line of yours "
+                     "was at fault and not the command, put that right instead.")
+        if name:
+            user += (f" The command takes the place of the one installed, so keep its plugin and verb: its name stays "
+                     f"{name}, although that name is in the table.")
     # One try: asking again is another call, and that is for the user to decide.
     output, meta = complete_valid(teacher, system, user, SCHEMA, tries=1)
     answer, advice = output["answer"], Advice(output["answer"], _line(output["reason"]), output)
@@ -435,11 +457,13 @@ def settle(found, description, words, teacher, proposal):
     found.command, = plugins.read(found.folder)
 
 
-def show(found, advice):
+def show(found, advice, before=None):
     """A proposal as the user sees it before deciding. The code comes first, since it is long and
     approval does not rest on reading it. What the decision does rest on comes last, so that it
     is in front of the user when they are asked: what the command does, what it may touch, and
-    how its checks and its lines fared."""
+    how its checks and its lines fared. `before` is the installed command it would take the
+    place of. What that one may touch is then shown too, where it differs, and how the runs that
+    failed go with the new code."""
     proposal = advice.raw["write"]
     if found.fault:
         return f"{advice.reason}\nIts command, {proposal['plugin']}.{proposal['verb']}, cannot be installed. {found.fault}"
@@ -447,7 +471,14 @@ def show(found, advice):
     width = max((len(flag(key)) for key in command.params), default=0)
     parts = [f"{command.name}  {command.description}  (effect: {command.effect})"]
     parts += [f"  {flag(key):{width}}  {param.hint}" for key, param in command.params.items()]
-    parts += [f"Why: {advice.reason}", ""] + plugins.touches(command) + [""]
+    parts += [f"Why: {advice.reason}", ""] + plugins.touches(command)
+    if before and plugins.touches(before) != plugins.touches(command):
+        parts += [f"That is a change. As installed, {command.name} is held to this:"]
+        parts += [f"  {line}" for line in plugins.touches(before)]
+    parts.append("")
+    if found.again:
+        parts.append(f"Runs that failed: {sum(not problem for _, problem in found.again)} of {len(found.again)} work with this code.")
+        parts += [f"  - {what} {problem}" for what, problem in found.again if problem]
     passed = sum(not problem for _, problem in found.checks)
     parts.append(f"Checks: {passed} of {len(found.checks)} passed.")
     parts += [f"  - {what} {problem}" for what, problem in found.checks if problem]
@@ -469,3 +500,30 @@ def install(found, plugin_dir):
         raise FileExistsError(f"{home} already exists")
     shutil.move(str(found.folder), str(home))
     return home
+
+
+def again(command, runs, online, minds=None):
+    """Run a command that only reads with the values of runs that failed, to see how they go with
+    new code. Returns [(what was run, "" or how it fails still)]. Nothing but a read command is
+    run this way: the values are the user's own, and anything else would change what they name."""
+    went = []
+    for args in runs:
+        what = render(command.name, args)
+        result = sandbox.run(command, args, offline=not online, minds=minds)
+        said = " ".join(result.text.split())
+        said = said if len(said) <= 300 else said[:300] + " ..."
+        went.append((what, "was not run: it needs the network." if sandbox.OFFLINE in result.text else
+                     "" if result.ok else f"still fails: {said}"))
+    return went
+
+
+def replace(found, installed):
+    """Put a staged proposal in the place of the installed command it was written to put right.
+    The one installed is not deleted: its folder is moved into the state folder. Returns (where
+    the new one is, where the old one went)."""
+    home = installed.source.parent
+    kept = state.directory() / "replaced" / f"{installed.name}-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    kept.parent.mkdir(exist_ok=True)
+    shutil.move(str(home), str(kept))
+    shutil.move(str(found.folder), str(home))
+    return home, kept

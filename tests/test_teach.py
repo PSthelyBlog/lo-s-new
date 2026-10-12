@@ -560,3 +560,146 @@ class DelegateTest(Case):
         shell.teacher = None
         shell.handle("delegate 1")
         self.assertEqual(self.shown[-1], "No model is set up as the teacher. Give the teacher role a provider in los.toml.")
+
+
+LOUD = {
+    "plugin": "text", "verb": "upper", "effect": "read",
+    "descriptions": ["Put a text in capital letters"],
+    "params": [{"name": "text", "hint": "the text to put in capitals"}],
+    "code": '''"""Put a text in capitals, with the help of a service that no longer answers."""
+from los import CommandError
+
+
+def do_upper(text=None):
+    if not text:
+        raise CommandError("needs --text")
+    raise CommandError("the service sent no results")
+''',
+    "lines": [{"line": "shout hello", "args": args(text="hello")}],
+    "others": [{"line": "list my files", "command": "fs.list"}],
+    "checks": [{"args": args(text="abc"), "expect": "output", "contains": ["ABC"]},
+               {"args": [], "expect": "error", "contains": ["--text"]}],
+}
+MENDED = {**LOUD, "code": LOUD["code"].replace('raise CommandError("the service sent no results")', "return text.upper()")
+                                       .replace(", with the help of a service that no longer answers", "")}
+ROUTED = [call("text.upper", text="hello"), call("fs.list")]       # where the student sends its two lines
+
+
+@needs_sandbox
+class RepairTest(Case):
+    """A command the teacher wrote, installed, that keeps failing, and the word that sends it back."""
+
+    shell = DelegateTest.shell
+
+    def setUp(self):
+        super().setUp()
+        teach.install(self.staged(LOUD, "make a text loud"), self.plugin_dir)
+        self.table, _ = plugins.load(self.plugin_dir)
+
+    def failing(self, *teacher_says, **more):
+        """A shell in which text.upper has just failed twice."""
+        shell = self.shell(*teacher_says, **more)
+        for text in ("hello", "to all"):
+            shell.handle(f"text.upper --text '{text}'")
+        self.assertEqual(self.shown, ["text.upper: the service sent no results"] * 2)
+        return shell
+
+    def test_improve_names_the_word_and_the_teacher_is_shown_the_command_and_what_went_wrong(self):
+        shell = self.failing({"answer": "cannot", "reason": "Its service is gone, and nothing takes its place."})
+        shell.handle("improve")
+        self.assertTrue(self.shown[-2].endswith("\n   repair text.upper   (one call to the teacher)"))
+        shell.handle("repair text.upper it never answers")
+        self.assertEqual(self.shown[-3:], [
+            "scripted-teacher is shown text.upper as it wrote it, and this:\n"
+            "  - Run as text.upper --text hello, it said: the service sent no results\n"
+            "  - Run as text.upper --text 'to all', it said: the service sent no results\n"
+            "  - The user says: it never answers",
+            "Asking scripted-teacher to put text.upper right.",
+            "text.upper stays as it is. scripted-teacher says it cannot be put right: Its service is gone, and nothing "
+            "takes its place."])
+        asked = self.teacher.user
+        self.assertTrue(asked.startswith("What the user wants: make a text loud\n\nYou wrote the command text.upper for "
+                                         "it, and the user installed it. This is the command as you gave it:\n{"))
+        self.assertIn('"verb": "upper"', asked)
+        self.assertIn("the service sent no results", asked.split("In use, this is what went wrong:")[0])    # its own code
+        self.assertIn("In use, this is what went wrong:\n- Run as text.upper --text hello, it said: the service sent no "
+                      "results\n- Run as text.upper --text 'to all', it said: the service sent no results\n"
+                      "- The user says: it never answers\n\nPut it right:", asked)
+        self.assertTrue(asked.endswith("its name stays text.upper, although that name is in the table."))
+        record = state.read("delegations")[-1]
+        self.assertEqual((record["repair"], record["words"], record["answer"]["answer"]), ("text.upper", "make a text loud", "cannot"))
+        shell.handle("improve")                                 # it said it cannot, and asking again is another call
+        self.assertEqual(self.shown[-1][:16], "Nothing stands o")
+        self.assertEqual(self.teacher.calls, 1)
+
+    def test_a_new_version_is_tried_run_on_what_failed_and_takes_the_place_of_the_old_one_which_is_kept(self):
+        shell = self.failing(write(MENDED, "It no longer leans on that service."), student_says=ROUTED, answers=["y"])
+        shell.handle("repair text.upper")
+        self.assertEqual(self.shown[3:7], ["Asking scripted-teacher to put text.upper right.",
+                                           "Running 2 checks of text.upper in the sandbox.",
+                                           "Running again 2 runs that failed, with the new code.",
+                                           "Trying 1 description of it on scripted."])
+        self.assertIn("Why: It no longer leans on that service.", self.shown[7])
+        self.assertIn("\nRuns that failed: 2 of 2 work with this code.\nChecks: 2 of 2 passed.\nLines: with this description "
+                      "the student sent 2 of 2 where they belong.", self.shown[7])
+        self.assertNotIn("That is a change.", self.shown[7])
+        self.assertEqual(self.asked, ["Replace text.upper with this? [y/N] "])
+        kept, = (state.directory() / "replaced").iterdir()
+        self.assertEqual(self.shown[8], f"Replaced text.upper. The one before is kept in {kept}.")
+        self.assertRegex(kept.name, r"^text\.upper-\d{8}-\d{6}$")
+        self.assertIn("the service sent no results", (kept / "commands.py").read_text())
+        self.assertIn("return text.upper()", (self.plugin_dir / "text.upper" / "commands.py").read_text())
+        self.assertEqual(json.loads((self.plugin_dir / "text.upper" / "proposal.json").read_text())["words"], "make a text loud")
+        shell.handle("improve")                                 # what the one before did is no longer held against it
+        self.assertEqual(self.shown[-1][:16], "Nothing stands o")
+        shell.handle("text.upper --text hello")
+        self.assertEqual(self.shown[-1], "HELLO")
+        self.assertEqual([(row["command"], row["reached"]) for row in state.read("line_checks")], [("text.upper", "text.upper")])
+
+    def test_what_it_may_touch_is_shown_against_what_the_installed_one_was_held_to_when_that_changes(self):
+        reaching = {**MENDED, "hosts": ["example.org"]}
+        shell = self.failing(write(reaching), student_says=ROUTED, answers=["n", "n"])
+        shell.handle("repair text.upper")
+        self.assertEqual(self.asked, ["Its checks would fetch from example.org. Let them? [y/N] ",
+                                      "Replace text.upper with this? [y/N] "])
+        self.assertIn("It may fetch pages from example.org.\nIt sees no other file of yours and reaches nothing else on "
+                      "the network.\nThat is a change. As installed, text.upper is held to this:\n"
+                      "  It sees no other file of yours and has no network.\n", self.shown[-2])
+        self.assertEqual(self.shown[-1], "Not replaced. What it wrote is kept in the state folder, in delegations.jsonl. "
+                                         "text.upper stays as it was.")
+        self.assertIn("the service sent no results", (self.plugin_dir / "text.upper" / "commands.py").read_text())
+        self.assertFalse((state.directory() / "replaced").exists())
+
+    def test_a_version_that_still_fails_can_be_sent_back_and_one_under_another_name_is_not_taken(self):
+        worse = {**LOUD, "code": LOUD["code"].replace("the service sent no results", "the service is still silent")}
+        renamed = {**MENDED, "verb": "loud"}
+        shell = self.failing(write(worse), write(renamed), student_says=ROUTED, answers=["n", "y", "n"])
+        shell.handle("repair text.upper")
+        self.assertIn("Runs that failed: 0 of 2 work with this code.\n  - text.upper --text hello still fails: the service "
+                      "is still silent\n", self.shown[7])
+        self.assertEqual(self.asked[:2], ["Replace text.upper with this? [y/N] ",
+                                          "Not replaced. Have scripted-teacher put right what went wrong? That is one more "
+                                          "call to it. [y/N] "])
+        self.assertEqual(self.shown[8], "Asking scripted-teacher again to put text.upper right.")
+        again = self.teacher.user
+        self.assertIn("You proposed this command for it:", again)
+        self.assertIn("- Run again as text.upper --text hello, it still fails: the service is still silent", again)
+        self.assertTrue(again.endswith("its name stays text.upper, although that name is in the table."))
+        self.assertIn("cannot be installed. It is named text.loud, and it was to take the place of text.upper.", self.shown[9])
+        self.assertEqual(self.shown[-1][:13], "Not replaced.")
+        self.assertEqual((self.teacher.calls, sorted(self.table)), (2, sorted(plugins.load(self.plugin_dir)[0])))
+
+    def test_only_a_command_a_model_wrote_and_only_with_something_to_go_on(self):
+        shell = self.shell()
+        shell.handle("repair")
+        self.assertEqual(self.shown[-1], "Usage: repair COMMAND, with a command a model wrote, and after it what is wrong "
+                                         "with it if you can say. Those commands are: text.upper.")
+        shell.handle("repair my bicycle")
+        self.assertTrue(self.shown[-1].startswith("Usage: repair COMMAND"))
+        shell.handle("repair fs.list")
+        self.assertEqual(self.shown[-1], "fs.list is a starter command and not one a model wrote, so it is not the "
+                                         "teacher's to put right.")
+        shell.handle("repair text.upper")
+        self.assertEqual(self.shown[-1], "Nothing is on record as having gone wrong with text.upper. Say what is wrong "
+                                         "after its name: repair text.upper WHAT IS WRONG.")
+        self.assertEqual(self.teacher.calls, 0)

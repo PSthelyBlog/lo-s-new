@@ -30,6 +30,7 @@ for each.
 import argparse
 import contextlib
 import datetime
+import json
 import os
 import pathlib
 import shutil
@@ -55,6 +56,10 @@ BUILTINS = {
     "delegate": "delegate WHAT YOU NEED, in your own words, asks the teacher what to do about it: run a command "
                 "that exists, install a new one that it writes, or neither. delegate NUMBER does that for a queued "
                 "need. You see its answer, and what a new command may touch, before anything happens.",
+    "repair": "repair COMMAND asks the teacher to put right a command it wrote, such as one that keeps failing. "
+              "The teacher is shown the command and what its latest runs said when they failed, and what you find "
+              "wrong with it if you say that after its name. Its new version is tried like any proposal, and you "
+              "see it before it takes the place of the old one, which is kept.",
     "trace": "trace shows the judgements the latest command asked for, and where each answer came from: what is on "
              "record, a rule or the student. trace NUMBER ANSWER sets one yourself, and it is used from then on. "
              "trace COMMAND NAME shows every answer on record for one judgement, and trace COMMAND NAME VALUE is "
@@ -175,6 +180,8 @@ class Shell:
             self.means(line[len("means"):].strip())
         elif words[0] == "delegate":
             self.delegate(line[len("delegate"):].strip())
+        elif words[0] == "repair":
+            self.repair(line[len("repair"):].strip())
         elif line == "needs":
             self.needs()
         elif words[0] == "forget":
@@ -406,20 +413,71 @@ class Shell:
                                 "That is one call.", default=False):
                 self.out("Not sent.")
                 return
+        self.consult(words, number)
+
+    def repair(self, rest):
+        """Ask the teacher to put right a command it wrote that is installed. It is shown the
+        command as it gave it, what the latest runs said when they failed, and what the user
+        finds wrong with it when they say."""
+        name, _, wrong = rest.partition(" ")
+        command, written = self.table.get(name), [one for one in sorted(self.table) if self.table[one].written_by]
+        if not command:
+            self.out("Usage: repair COMMAND, with a command a model wrote, and after it what is wrong with it if you "
+                     "can say. " + (f"Those commands are: {', '.join(written)}." if written else "No such command is here."))
+            return
+        if not command.written_by:
+            self.out(f"{name} is a starter command and not one a model wrote, so it is not the teacher's to put right.")
+            return
+        if not self.teacher or not self.plugin_dir:
+            self.out("No model is set up as the teacher. Give the teacher role a provider in los.toml.")
+            return
+        given = command.source.parent / "proposal.json"
+        if not given.exists():
+            self.out(f"{name} cannot be sent back: its folder no longer holds what the teacher gave for it, proposal.json.")
+            return
+        installed = json.loads(given.read_text())
+        words = installed.pop("words", "") or name
+        wrongs = list(dict.fromkeys(         # the oldest first, and each said once
+            f"Run as {render(name, run['args'])}, it {'broke' if run.get('broke') else 'said'}: {improve.fault(run)}"
+            for run in reversed(improve.streak(name)[:teach.MOST["runs"]])))
+        if wrong.strip():
+            wrongs.append(f"The user says: {wrong.strip()}")
+        if not wrongs:
+            self.out(f"Nothing is on record as having gone wrong with {name}. Say what is wrong after its name: "
+                     f"repair {name} WHAT IS WRONG.")
+            return
+        # The values of the user's own runs are in it, so they see what goes out before it does.
+        self.out(f"{self.teacher.model} is shown {name} as it wrote it, and this:\n" + "\n".join(f"  - {one}" for one in wrongs))
+        self.consult(words, mending=(command, installed, wrongs))
+
+    def consult(self, words, number=None, mending=None):
+        """The calls to the teacher about one thing the user wants, and what follows from each
+        answer. `mending` is (an installed command of its own to put right, that command as it
+        gave it, what went wrong in use). Every pass through the loop is one call."""
         exchange, earlier = [], None    # what it asked and was told; a proposal of its own to put right
+        installed, in_use, calls = (mending[0] if mending else None), bool(mending), 0
+        if mending:
+            earlier = mending[1:]
         while True:
             record = {"date": datetime.date.today().isoformat(), "words": words, "model": self.teacher.model}
+            asking = f"Asking {self.teacher.model}{' again' if calls else ''} about: {words}"
+            if installed:
+                record |= {"repair": installed.name, "at": datetime.datetime.now().isoformat(timespec="seconds")}
+                asking = f"Asking {self.teacher.model}{' again' if calls else ''} to put {installed.name} right."
             try:
-                with self.wait(f"Asking {self.teacher.model}{' again' if exchange or earlier else ''} about: {words}"):
+                with self.wait(asking):
                     advice, meta = teach.ask(self.teacher, words, self.table,
-                                             {"student": self.student, "teacher": self.teacher}, EXAMPLE, exchange, earlier)
+                                             {"student": self.student, "teacher": self.teacher}, EXAMPLE, exchange, earlier,
+                                             (installed.name, in_use) if installed else None)
             except (ModelUnavailable, RuntimeError) as error:
                 state.append("delegations", {**record, "failed": str(error)})
                 self.out(Fault(f"No answer came back that could be used: {error}"))
-                if number is None and self.confirm("Queue your words as a need, to ask again later?", default=True):
+                if number is None and not installed and self.confirm("Queue your words as a need, to ask again later?",
+                                                                     default=True):
                     number = cases.queue(words, "user")
                     self.out(f"Queued as need {number}. delegate {number} asks again.")
                 return
+            calls += 1
             state.append("delegations", {**record, "seconds": meta.get("seconds"), "answer": advice.raw})
             if advice.answer == "ask":
                 self.out(f"{advice.reason}\n{self.teacher.model} asks: {advice.question}")
@@ -432,11 +490,14 @@ class Shell:
                     return
                 exchange.append((advice.question, reply))
             elif advice.answer == "write":
-                earlier = self.propose(advice, words, number)
+                earlier, in_use = self.propose(advice, words, number, installed), False
                 if not earlier:
                     return
             else:
                 break
+        if advice.answer == "cannot" and installed:
+            self.out(f"{installed.name} stays as it is. {self.teacher.model} says it cannot be put right: {advice.reason}")
+            return
         if advice.answer == "cannot":
             self.out(f"lo-s cannot do this: {advice.reason}" +
                      (f"\nNeed {number} stays queued; forget {number} drops it." if number else ""))
@@ -457,22 +518,39 @@ class Shell:
             self.out(Said("Not run. ", Aside("If that was the wrong command for what you want, say wrong, or say the "
                                              "right one with means.")))
 
-    def propose(self, advice, words, number):
+    def propose(self, advice, words, number, installed=None):
         """Try a command the teacher wrote, show what was found and install it if the user agrees.
-        Returns nothing when that is the end of it, or the proposal and what went wrong with it
-        when the user wants the teacher to put it right."""
+        `installed` is the command it was written to put right, and it then takes that one's
+        place. Returns nothing when that is the end of it, or the proposal and what went wrong
+        with it when the user wants the teacher to put it right."""
         proposal, folder = advice.raw["write"], teach.scratch()
+        left = "Not replaced" if installed else "Not installed"
         try:
-            found = teach.stage(proposal, words, self.teacher, self.table, folder)
+            # The command to put right is the one name in the table that the new one may have.
+            others = {name: one for name, one in self.table.items() if not installed or name != installed.name}
+            named = f"{proposal['plugin']}.{proposal['verb']}"
+            found = (teach.Found(fault=f"It is named {named}, and it was to take the place of {installed.name}.")
+                     if installed and named != installed.name else
+                     teach.stage(proposal, words, self.teacher, others, folder))
             if found.command:
-                self.trial(found, proposal, words)
-            self.out(teach.show(found, advice))
-            if found.command and self.confirm(f"Install {found.command.name}?", default=False):
-                name, home = found.command.name, teach.install(found, self.plugin_dir)
+                self.trial(found, proposal, words, installed)
+            self.out(teach.show(found, advice, installed))
+            if found.command and self.confirm(f"Replace {installed.name} with this?" if installed else
+                                              f"Install {found.command.name}?", default=False):
+                name = found.command.name
+                if installed:
+                    home, kept = teach.replace(found, installed)
+                    improve.replaced(name)      # how the one before fared says nothing about this one
+                else:
+                    home = teach.install(found, self.plugin_dir)
                 self.table, problems = plugins.load(self.plugin_dir)
-                self.out(Said("\n".join(problems + [f"Installed {name} in {home}. "]), Aside("Delete that folder to remove it.")))
+                self.out(Said("\n".join(problems + [f"Replaced {name}. "]), Aside(f"The one before is kept in {kept}."))
+                         if installed else
+                         Said("\n".join(problems + [f"Installed {name} in {home}. "]), Aside("Delete that folder to remove it.")))
                 if found.tried:     # where its own lines went under the description kept: what a later check compares with
                     improve.note(name, found.tried[0][4])
+                if installed:
+                    return None
                 self.suggest(name, proposal)
                 if number or any(" ".join(entry["line"].split()) == words for entry in proposal["lines"]):
                     self.out(f"Now for what you asked: {words}")    # the words were a request, so carry it out
@@ -480,23 +558,31 @@ class Shell:
                     self.answered(words)
                 return None
             failures = found.failures()
-            if failures and self.confirm(f"Not installed. Have {self.teacher.model} put right what went wrong? "
+            if failures and self.confirm(f"{left}. Have {self.teacher.model} put right what went wrong? "
                                          "That is one more call to it.", default=False):
                 return proposal, failures
-            self.out("Not installed. What it wrote is kept in the state folder, in delegations.jsonl." +
-                     (f" Need {number} stays queued." if number else ""))
+            self.out(f"{left}. What it wrote is kept in the state folder, in delegations.jsonl." +
+                     (f" Need {number} stays queued." if number else "") +
+                     (f" {installed.name} stays as it was." if installed else ""))
             return None
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 
-    def trial(self, found, proposal, words):
+    def trial(self, found, proposal, words, installed=None):
         """What can be found out about a proposal for free: run its checks in the sandbox, and try
-        its descriptions on the student."""
+        its descriptions on the student. For one that would take the place of an installed
+        command that only reads, the runs that failed are run again with the new code."""
         command, checks = found.command, proposal["checks"][:teach.MOST["checks"]]
         online = not command.hosts or self.confirm(
             f"Its checks would fetch from {', '.join(command.hosts)}. Let them?", default=False)
         with self.wait(f"Running {count(len(checks), 'check')} of {command.name} in the sandbox."):
             found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
+        failed = {json.dumps(run["args"], sort_keys=True): run["args"]      # each set of values once, the latest last
+                  for run in reversed(improve.streak(command.name))} if installed and command.effect == "read" else {}
+        if failed:
+            runs = list(failed.values())[-teach.MOST["runs"]:]
+            with self.wait(f"Running again {count(len(runs), 'run')} that failed, with the new code."):
+                found.again = teach.again(command, runs, online, self.minds.trial())
         if not self.student:
             found.untried = "No model is set up as the student."
             return
@@ -956,7 +1042,8 @@ class Shell:
                     "parameters, a path, or a line you settled. " if self.edit else "") +
                 "A line you accepted is remembered. wrong takes the latest choice back, and means COMMAND says "
                 "what the line does mean. delegate WHAT YOU NEED asks the teacher, which can write a new command; "
-                "needs lists what nothing could do yet, and forget NUMBER drops one. trace shows the judgements "
+                "needs lists what nothing could do yet, and forget NUMBER drops one. repair COMMAND has the teacher "
+                "put right a command it wrote. trace shows the judgements "
                 "the latest command asked for, and rule COMMAND NAME has the teacher turn one into code. improve "
                 "lists what lo-s could do better, with what to type for each, and stats counts who answered. "
                 "help NAME explains a command and says what it may touch; each runs in a sandbox that holds only "

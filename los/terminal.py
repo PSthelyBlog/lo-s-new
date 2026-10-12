@@ -31,7 +31,7 @@ from .say import Aside, Exact, Fault, Warn, voices
 
 KEPT = 2000     # lines of history kept from one session to the next
 ALONE = ("wrong", "needs", "stats", "exit")                             # the shell's words that stand alone
-TAKING = ("help", "means", "forget", "delegate", "trace", "rule", "improve")    # and those that take more
+TAKING = ("help", "means", "forget", "delegate", "repair", "trace", "rule", "improve")  # and those that take more
 
 
 BOLD, DIM, RED, YELLOW, RESET = "\x1b[1m", "\x1b[2m", "\x1b[31m", "\x1b[33m", "\x1b[0m"
@@ -235,6 +235,8 @@ def _after(table, words):
         return [f"{number} " for number in cases.waiting()]
     if word == "improve" and not rest:
         return ["lines"]
+    if word == "repair" and not rest:       # a command a model wrote
+        return [name + " " for name in table if table[name].written_by]
     if word in ("rule", "trace") and not rest:
         return [name + " " for name in judging] + ["forget "] * (word == "trace")
     if word == "trace" and rest == ["forget"]:      # trace forget NUMBER: the answers of the latest run that the user set

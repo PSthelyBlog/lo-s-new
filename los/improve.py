@@ -98,25 +98,45 @@ def ran(name, args, result):
     state.append("runs", {"at": datetime.datetime.now().isoformat(timespec="seconds"), "command": name, **how})
 
 
+def replaced(name):
+    """Note that a command was replaced by a new version. How the one before fared says nothing
+    about this one."""
+    state.append("runs", {"at": datetime.datetime.now().isoformat(timespec="seconds"), "command": name, "replaced": True})
+
+
+def streak(name):
+    """The latest runs of a command that all failed, the newest first: those since it last
+    worked, or since it was replaced."""
+    mine = [run for run in state.read("runs") if run["command"] == name]
+    return list(itertools.takewhile(lambda run: run.get("ok") is False, reversed(mine)))
+
+
+def fault(run):
+    """What a run that failed said, in a line. A command that broke says so with a traceback, and
+    its last line is what went wrong."""
+    return (run["said"].strip().splitlines() or [""])[-1].strip() if run.get("broke") else " ".join(run["said"].split())
+
+
 def failing(table):
     """A command a model wrote that keeps failing: each of its latest runs ended in a fault,
     however often it worked before that. One fault may be a value the user got wrong. Several in
     a row with nothing working in between point at the command, or at what it reaches. A starter
-    command is left out: nothing here could put it right."""
-    runs, found = {}, []
-    for run in state.read("runs"):
-        runs.setdefault(run["command"], []).append(run)
-    for name, mine in runs.items():
-        latest = list(itertools.takewhile(lambda run: not run["ok"], reversed(mine)))      # the newest first
+    command is left out: it is not the teacher's to put right. So is one the teacher has said it
+    cannot put right, until it has worked again."""
+    found = []
+    turned_down = {call["repair"]: call["at"] for call in state.read("delegations")
+                   if call.get("repair") and call.get("answer", {}).get("answer") == "cannot"}
+    for name in dict.fromkeys(run["command"] for run in state.read("runs")):
+        latest = streak(name)
         if name not in table or not table[name].written_by or len(latest) < FAILING:
             continue
-        # A command that broke says so with a traceback, and its last line is what went wrong.
-        said = [(run["said"].strip().splitlines() or [""])[-1].strip() if run.get("broke") else " ".join(run["said"].split())
-                for run in latest]
+        if turned_down.get(name, "") >= latest[-1]["at"]:
+            continue
+        said = [fault(run) for run in latest]
         found.append(Found(f"{name} failed the last {count(len(latest), 'time')} it ran, since {latest[-1]['at'][:10]}" + (
             f", each time saying: \"{said[0]}\"." if len(set(said)) == 1 else f". The last time it said: \"{said[0]}\".") +
-            f" A model wrote it, so the fault may be in the command or in what it reaches. help {name} says "
-            "what that is.", f"help {name}", times=len(latest)))
+            " A model wrote it, so the teacher can be shown what went wrong and asked to put it right.",
+            f"repair {name}", "one call to the teacher", times=len(latest)))
     return found
 
 

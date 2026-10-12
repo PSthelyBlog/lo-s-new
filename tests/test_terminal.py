@@ -36,7 +36,7 @@ class CompleteTest(Folders):
         self.assertEqual(complete("", "fs"), ["fs.list ", "fs.move "])
         self.assertEqual(complete("", "s"), ["stats", "sys.health "])       # a word that stands alone gets no space
         self.assertEqual(complete("", "tr"), ["trace "])
-        self.assertEqual(len(complete("", "")), len(TABLE) + 11)
+        self.assertEqual(len(complete("", "")), len(TABLE) + 12)
 
     def test_within_a_word_tab_works_on_what_follows_the_last_slash(self):
         for name in ("docs", "downloads"):
@@ -56,6 +56,12 @@ class CompleteTest(Folders):
         cases.record("line", "what is the price/performance of this", {"command": "fs.list", "args": {}}, "student", "accepted")
         self.assertEqual(offered("what is the ", "pri"), ["price/performance of this"])
         self.assertEqual(offered("what is the price/", "perf"), ["performance of this"])
+
+    def test_repair_is_followed_by_a_command_a_model_wrote(self):
+        written = {**TABLE, "web.search": Command("web.search", "Search the web", {}, written_by="a-teacher")}
+        self.assertEqual(terminal.complete(written, "repair ", ""), ["web.search "])
+        self.assertEqual(terminal.complete(written, "repair web.search ", ""), [])      # what is wrong is in the user's words
+        self.assertEqual(complete("", "rep"), ["repair "])
 
     def test_a_command_is_followed_by_its_own_parameters_once_each(self):
         self.assertEqual(complete("fs.list ", ""), ["--path ", "--sort-by "])
