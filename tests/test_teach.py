@@ -538,7 +538,8 @@ class DelegateTest(Case):
         proposal = self.shown[3]
         self.assertIn("It may fetch pages from api.example.org.\nIt sees no other file of yours and reaches nothing "
                       "else on the network.", proposal)
-        self.assertIn("Checks: 1 of 2 passed.\n  - weather.forecast --place Lyon was not run: it needs the network.", proposal)
+        self.assertIn("Checks: 1 of 1 passed, and 1 was not run.\n  - weather.forecast --place Lyon was not run: it needs "
+                      "the network.", proposal)
         self.assertEqual(self.shown[4], "Not installed. What it wrote is kept in the state folder, in delegations.jsonl.")
 
     def test_a_remembered_line_stays_where_it_is_unless_the_user_moves_it(self):
@@ -611,7 +612,8 @@ class KeyedTest(Case):
                       "It may fetch pages from api.example.org.\n"
                       "It sends your key for api.example.org with each request to it. The command does not see the key.\n"
                       "It sees no other file of yours and reaches nothing else on the network.", proposal)
-        self.assertIn("Checks: 1 of 2 passed.\n  - web.find --query ducks was not run: it needs a key that is not set.", proposal)
+        self.assertIn("Checks: 1 of 1 passed, and 1 was not run.\n  - web.find --query ducks was not run: it needs a key "
+                      "that is not set.", proposal)
         manifest = (self.plugin_dir / "web.find" / "plugin.toml").read_text()
         self.assertIn('hosts = ["api.example.org"]\nkeys = { "api.example.org" = { header = "X-Api-Key" } }\n', manifest)
         self.assertEqual(plugins.load(self.plugin_dir)[0]["web.find"].keys, {"api.example.org": {"header": "X-Api-Key"}})
@@ -619,6 +621,17 @@ class KeyedTest(Case):
         self.assertEqual(self.shown[-1], "web.find: api.example.org wants a key, and none is set. key api.example.org sets one")
         shell.handle("key")
         self.assertTrue(self.shown[-1].startswith("api.example.org: no key is kept, and web.find wants one."))
+
+    def test_what_was_not_run_is_counted_apart_from_what_went_well_or_badly(self):
+        ok, bad, left = ("a", ""), ("b", "should have worked and gave an error: x"), ("c", "was not run: it needs a key.")
+        passed, works = ("passed", "passed"), ("works with this code", "work with this code")
+        self.assertEqual([teach._fared(results, passed) for results in (
+            [ok] * 5, [ok, bad], [ok, ok, ok, left], [ok, bad, left, left], [left], [left, left], [])], [
+            "5 of 5 passed.", "1 of 2 passed.", "3 of 3 passed, and 1 was not run.", "1 of 2 passed, and 2 were not run.",
+            "the only one was not run.", "none of the 2 was run.", "0 of 0 passed."])
+        self.assertEqual([teach._fared(results, works, " again") for results in ([ok, ok], [ok], [bad, bad], [ok, left], [left])], [
+            "2 of 2 work with this code.", "1 of 1 works with this code.", "0 of 2 work with this code.",
+            "1 of 1 works with this code, and 1 was not run again.", "the only one was not run again."])
 
     def test_the_teacher_is_told_where_a_key_goes_and_never_to_hold_one(self):
         self.assertIn("lo-s keeps the user's key for that host and adds it to every request", teach.BRIEF)

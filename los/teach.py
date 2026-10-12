@@ -473,6 +473,18 @@ def settle(found, description, words, teacher, proposal):
     found.command, = plugins.read(found.folder)
 
 
+def _fared(results, well, again=""):
+    """How checks or runs fared, in a sentence. One that was not run says nothing about the
+    command, so it is counted apart from those that went well or badly. `well` is (the word for
+    one that went well, the word for several)."""
+    ran = [problem for _, problem in results if not problem.startswith("was not run")]
+    left, good = len(results) - len(ran), sum(not problem for problem in ran)
+    if left and not ran:
+        return f"none of the {left} was run{again}." if left > 1 else f"the only one was not run{again}."
+    return f"{good} of {len(ran)} {well[good != 1]}" + (
+        f", and {left} {'was' if left == 1 else 'were'} not run{again}." if left else ".")
+
+
 def show(found, advice, before=None):
     """A proposal as the user sees it before deciding. The code comes first, since it is long and
     approval does not rest on reading it. What the decision does rest on comes last, so that it
@@ -493,10 +505,9 @@ def show(found, advice, before=None):
         parts += [f"  {line}" for line in plugins.touches(before)]
     parts.append("")
     if found.again:
-        parts.append(f"Runs that failed: {sum(not problem for _, problem in found.again)} of {len(found.again)} work with this code.")
+        parts.append("Runs that failed: " + _fared(found.again, ("works with this code", "work with this code"), " again"))
         parts += [f"  - {what} {problem}" for what, problem in found.again if problem]
-    passed = sum(not problem for _, problem in found.checks)
-    parts.append(f"Checks: {passed} of {len(found.checks)} passed.")
+    parts.append("Checks: " + _fared(found.checks, ("passed", "passed")))
     parts += [f"  - {what} {problem}" for what, problem in found.checks if problem]
     if found.tried:
         _, right, total, misses, *_ = found.tried[0]

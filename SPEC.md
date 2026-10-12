@@ -873,6 +873,9 @@ improvements.
     2.3 seconds each. For words that said nothing usable it left the parameters out.
   - This shows that the student fills such a line in, not that its values are right: each is
     shown before it runs.
+- On the proposal screen, a check or a run that was not run is counted apart (`_fared` in
+  `los/teach.py`). The owner's repair had shown "0 of 1 work with this code" for a run that
+  was only waiting for a key, and "3 of 4 passed" where three ran and three passed.
 
 ## What the first build measured
 
