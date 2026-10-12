@@ -36,7 +36,7 @@ class CompleteTest(Folders):
         self.assertEqual(complete("", "fs"), ["fs.list ", "fs.move "])
         self.assertEqual(complete("", "s"), ["stats", "sys.health "])       # a word that stands alone gets no space
         self.assertEqual(complete("", "tr"), ["trace "])
-        self.assertEqual(len(complete("", "")), len(TABLE) + 12)
+        self.assertEqual(len(complete("", "")), len(TABLE) + 13)
 
     def test_within_a_word_tab_works_on_what_follows_the_last_slash(self):
         for name in ("docs", "downloads"):
@@ -62,6 +62,15 @@ class CompleteTest(Folders):
         self.assertEqual(terminal.complete(written, "repair ", ""), ["web.search "])
         self.assertEqual(terminal.complete(written, "repair web.search ", ""), [])      # what is wrong is in the user's words
         self.assertEqual(complete("", "rep"), ["repair "])
+
+    def test_key_is_followed_by_a_host_a_command_wants_a_key_for_or_one_is_kept_for(self):
+        from los import keys
+        keyed = {**TABLE, "web.search": Command("web.search", "Search the web", {}, hosts=("api.example.org",),
+                                                keys={"api.example.org": {"header": "X-Api-Key"}})}
+        keys.keep("old.example.net", "k")
+        self.assertEqual(terminal.complete(keyed, "key ", ""), ["api.example.org ", "old.example.net "])
+        self.assertEqual(terminal.complete(keyed, "key api.example.org ", ""), ["forget"])
+        self.assertEqual(terminal.complete(keyed, "key api.example.org forget ", ""), [])
 
     def test_a_command_is_followed_by_its_own_parameters_once_each(self):
         self.assertEqual(complete("fs.list ", ""), ["--path ", "--sort-by "])
@@ -238,6 +247,12 @@ class TypingTest(Folders):
         asked = self.screen.partition("lo-s> ")[0]
         self.assertNotIn("fs.list", asked)                      # neither a command
         self.assertNotIn("visible.txt", asked)                  # nor a file of the folder
+
+    def test_a_key_typed_on_the_line_by_mistake_is_not_kept_in_the_history(self):
+        got = self.typed(("line", "key api.example.org s3cret\n"), ("line", "key api.example.org forget\n"),
+                         ("line", "key api.example.org\n"), ("line", UP + UP + UP + "\n"))
+        self.assertEqual(got[-1], "key api.example.org forget")          # the oldest line there is to go back to
+        self.assertNotIn("s3cret", (state.directory() / "history").read_text())
 
     def test_a_line_to_correct_starts_out_filled_in(self):
         got = self.typed(("fs.list --path home", "\x7f" * 4 + "~\n"), ("line", UP + "\n"))

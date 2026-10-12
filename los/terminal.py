@@ -25,13 +25,13 @@ import threading
 import time
 import unicodedata
 
-from . import cases, rules
+from . import cases, keys, rules
 from .parse import flag
 from .say import Aside, Exact, Fault, Warn, voices
 
 KEPT = 2000     # lines of history kept from one session to the next
 ALONE = ("wrong", "needs", "stats", "exit")                             # the shell's words that stand alone
-TAKING = ("help", "means", "forget", "delegate", "repair", "trace", "rule", "improve")  # and those that take more
+TAKING = ("help", "means", "forget", "delegate", "repair", "key", "trace", "rule", "improve")   # and those that take more
 
 
 BOLD, DIM, RED, YELLOW, RESET = "\x1b[1m", "\x1b[2m", "\x1b[31m", "\x1b[33m", "\x1b[0m"
@@ -237,6 +237,10 @@ def _after(table, words):
         return ["lines"]
     if word == "repair" and not rest:       # a command a model wrote
         return [name + " " for name in table if table[name].written_by]
+    if word == "key" and not rest:          # a host a command wants a key for, or one a key is kept for
+        return [host + " " for host in sorted({host for name in table for host in table[name].keys} | set(keys.held()))]
+    if word == "key" and len(rest) == 1:
+        return ["forget"]
     if word in ("rule", "trace") and not rest:
         return [name + " " for name in judging] + ["forget "] * (word == "trace")
     if word == "trace" and rest == ["forget"]:      # trace forget NUMBER: the answers of the latest run that the user set
@@ -318,6 +322,9 @@ def start(table, history):
     def read(prompt):
         line = input(prompt)
         last = readline.get_current_history_length()
+        words = line.split()
+        if words[:1] == ["key"] and words[2:] not in ([], ["forget"]):      # a key typed on the line by mistake: not kept
+            return line
         if line.strip() and (not last or readline.get_history_item(last) != line):
             readline.add_history(line)
             readline.append_history_file(1, history)

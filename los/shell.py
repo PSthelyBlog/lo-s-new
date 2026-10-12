@@ -30,6 +30,7 @@ for each.
 import argparse
 import contextlib
 import datetime
+import getpass
 import json
 import os
 import pathlib
@@ -39,7 +40,7 @@ import sys
 import textwrap
 import tomllib
 
-from . import cases, improve, judge, plugins, route, rules, sandbox, state, teach
+from . import cases, improve, judge, keys, plugins, route, rules, sandbox, state, teach
 from .models import ModelUnavailable, provider
 from .parse import UsageError, count, flag, parse, render, usage
 from .say import Aside, Exact, Fault, Said, Warn
@@ -56,6 +57,10 @@ BUILTINS = {
     "delegate": "delegate WHAT YOU NEED, in your own words, asks the teacher what to do about it: run a command "
                 "that exists, install a new one that it writes, or neither. delegate NUMBER does that for a queued "
                 "need. You see its answer, and what a new command may touch, before anything happens.",
+    "key": "key HOST keeps the key a service wants, for the commands that say they send one there. You are asked "
+           "for it at a prompt that does not show it. key alone lists the hosts a key is kept for and those a "
+           "command wants one for, and key HOST forget drops one. lo-s adds a key to a request itself: no "
+           "command, record or model is given one.",
     "repair": "repair COMMAND asks the teacher to put right a command it wrote, such as one that keeps failing. "
               "The teacher is shown the command and what its latest runs said when they failed, and what you find "
               "wrong with it if you say that after its name. Its new version is tried like any proposal, and you "
@@ -126,8 +131,9 @@ def slip(word):
 
 class Shell:
     def __init__(self, table, ask=input, out=print, run=sandbox.run, student=None, teacher=None, plugin_dir=None,
-                 edit=None):
+                 edit=None, secret=getpass.getpass):
         self.table, self.ask, self.out, self.runner, self.student = table, ask, out, run, student
+        self.secret = secret    # reads what must not be shown as it is typed: a key
         self.teacher, self.plugin_dir = teacher, plugin_dir
         self.edit = edit    # reads a line that starts out as a given text, where the terminal can do that
         self.watch = None   # counts the seconds of a wait in place, where there is a terminal to do it on
@@ -182,6 +188,8 @@ class Shell:
             self.delegate(line[len("delegate"):].strip())
         elif words[0] == "repair":
             self.repair(line[len("repair"):].strip())
+        elif words[0] == "key":
+            self.key(words[1:])
         elif line == "needs":
             self.needs()
         elif words[0] == "forget":
@@ -573,8 +581,9 @@ class Shell:
         its descriptions on the student. For one that would take the place of an installed
         command that only reads, the runs that failed are run again with the new code."""
         command, checks = found.command, proposal["checks"][:teach.MOST["checks"]]
-        online = not command.hosts or self.confirm(
-            f"Its checks would fetch from {', '.join(command.hosts)}. Let them?", default=False)
+        online = not command.hosts or self.confirm(     # a service that wants a key may count each request
+            f"Its checks would fetch from {', '.join(command.hosts)}" +
+            (f", and send your key for {', '.join(command.keys)}" if command.keys else "") + ". Let them?", default=False)
         with self.wait(f"Running {count(len(checks), 'check')} of {command.name} in the sandbox."):
             found.checks = [teach.check(command, wanted, online, self.minds.trial()) for wanted in checks]
         failed = {json.dumps(run["args"], sort_keys=True): run["args"]      # each set of values once, the latest last
@@ -618,6 +627,41 @@ class Shell:
                 self.out("Moved.")
             else:
                 self.out("Left as it was.")
+
+    def key(self, words):
+        """Keep, list or forget the key a host wants. A key is typed at a prompt that does not
+        show it, and nothing here ever says one back."""
+        held, wanted = keys.held(), {}      # and which commands send a key to which host
+        for name in sorted(self.table):
+            for host in self.table[name].keys:
+                wanted.setdefault(host, []).append(name)
+        sends = lambda host: f"{several(wanted[host])} {'sends' if len(wanted[host]) == 1 else 'send'}"
+        if not words:
+            listed = [f"{host}: a key is kept. " + (f"{sends(host)} it." if host in wanted else "No command here sends it.")
+                      for host in sorted(held)]
+            listed += [f"{host}: no key is kept, and {several(names)} {'wants' if len(names) == 1 else 'want'} one."
+                       for host, names in sorted(wanted.items()) if host not in held]
+            self.out(Said("\n".join(listed) if listed else "No key is kept, and no command here wants one.",
+                          Aside("\nkey HOST keeps the key for a host, and key HOST forget drops it.")))
+            return
+        host = words[0].lower()
+        if not plugins.HOST.fullmatch(host) or words[1:] not in ([], ["forget"]):
+            self.out("Usage: key HOST, with the host a key is for, such as key api.example.org. key HOST forget drops "
+                     "it, and key alone lists them. The key itself is asked for: it is never typed on the line.")
+            return
+        if words[1:]:
+            self.out(f"Forgotten: the key for {host}." if keys.drop(host) else f"No key is kept for {host}.")
+            return
+        try:
+            key = self.secret(f"Key for {host}, which is not shown as you type. Enter alone leaves things as they are: ").strip()
+        except EOFError:
+            key = ""
+        if not key:
+            self.out("Left as it was.")
+            return
+        keys.keep(host, key)
+        self.out(f"Kept for {host}. " + (f"{sends(host)} it with each request there." if host in wanted else
+                                         "No command here sends a key to it yet."))
 
     def needs(self):
         waiting = cases.waiting()
@@ -1043,7 +1087,7 @@ class Shell:
                 "A line you accepted is remembered. wrong takes the latest choice back, and means COMMAND says "
                 "what the line does mean. delegate WHAT YOU NEED asks the teacher, which can write a new command; "
                 "needs lists what nothing could do yet, and forget NUMBER drops one. repair COMMAND has the teacher "
-                "put right a command it wrote. trace shows the judgements "
+                "put right a command it wrote, and key HOST keeps the key a service wants. trace shows the judgements "
                 "the latest command asked for, and rule COMMAND NAME has the teacher turn one into code. improve "
                 "lists what lo-s could do better, with what to type for each, and stats counts who answered. "
                 "help NAME explains a command and says what it may touch; each runs in a sandbox that holds only "

@@ -2,7 +2,7 @@ import contextlib
 import io
 from unittest import mock
 
-from los import cases, sandbox, shell
+from los import cases, keys, plugins, sandbox, shell, state
 from los.sandbox import Result
 from los.say import Aside, Exact, Fault, Warn, voices
 from tests.helpers import NONE, Folders, ShellCase, needs_sandbox
@@ -191,3 +191,62 @@ class VoicesTest(ShellCase):
         shell.width = None
         shell.handle("help")
         self.assertEqual(len(self.shown[-1].splitlines()), 2)       # an empty line, and the text as one paragraph
+
+
+class KeyTest(ShellCase):
+    """The word that keeps the key a host wants. What is typed for a key is never said back."""
+
+    KEYED = {"web.search": plugins.Command("web.search", "Search the web", {}, hosts=("api.example.org",),
+                                           keys={"api.example.org": {"header": "X-Api-Key"}}),
+             "web.news": plugins.Command("web.news", "Read the news", {}, hosts=("api.example.org", "feed.example.net"),
+                                         keys={"api.example.org": {"header": "X-Api-Key"}, "feed.example.net": {"param": "key"}})}
+
+    def keyed(self, *typed):
+        """A shell in which each key asked for is the next of `typed`."""
+        shell, self.prompts, given = self.shell(commands={**shell_table(), **self.KEYED}), [], list(typed)
+        shell.secret = lambda prompt: self.prompts.append(prompt) or given.pop(0)
+        return shell
+
+    def test_a_key_is_asked_for_out_of_sight_kept_for_its_host_and_never_said_back(self):
+        shell = self.keyed("  s3cret  ")
+        shell.handle("key api.example.org")
+        self.assertEqual(self.prompts, ["Key for api.example.org, which is not shown as you type. Enter alone leaves things "
+                                        "as they are: "])
+        self.assertEqual(self.shown, ["Kept for api.example.org. web.news and web.search send it with each request there."])
+        self.assertEqual((keys.held(), self.asked), ({"api.example.org": "s3cret"}, []))
+        shell.handle("key")
+        self.assertEqual(self.shown[-1], "api.example.org: a key is kept. web.news and web.search send it.\n"
+                                         "feed.example.net: no key is kept, and web.news wants one.\n"
+                                         "key HOST keeps the key for a host, and key HOST forget drops it.")
+        shell.handle("help web.search")
+        self.assertIn("It sends your key for api.example.org with each request to it. The command does not see the key.",
+                      self.shown[-1])
+        self.assertNotIn("s3cret", "\n".join(self.shown) + "".join(
+            path.read_text() for path in state.directory().glob("*.jsonl")))
+
+    def test_enter_alone_leaves_things_as_they_are_and_forget_drops_a_key(self):
+        shell = self.keyed("first", "", "second")
+        shell.handle("key Other.Example.com")
+        self.assertEqual(self.shown[-1], "Kept for other.example.com. No command here sends a key to it yet.")
+        shell.handle("key other.example.com")
+        self.assertEqual((self.shown[-1], keys.held()), ("Left as it was.", {"other.example.com": "first"}))
+        shell.handle("key other.example.com")
+        self.assertEqual(keys.held(), {"other.example.com": "second"})
+        shell.handle("key other.example.com forget")
+        shell.handle("key other.example.com forget")
+        self.assertEqual((self.shown[-2:], keys.held()), (["Forgotten: the key for other.example.com.",
+                                                           "No key is kept for other.example.com."], {}))
+
+    def test_a_key_is_never_taken_from_the_line(self):
+        shell = self.keyed()
+        for line in ("key api.example.org s3cret", "key not-a-host", "key api.example.org forget it"):
+            shell.handle(line)
+            self.assertTrue(self.shown[-1].startswith("Usage: key HOST, with the host a key is for"), line)
+        self.assertEqual((self.prompts, keys.held()), ([], {}))
+        self.shell().handle("key")
+        self.assertTrue(self.shown[-1].startswith("No key is kept, and no command here wants one."))
+
+
+def shell_table():
+    from tests.helpers import TABLE
+    return TABLE

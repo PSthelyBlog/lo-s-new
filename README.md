@@ -180,6 +180,7 @@ wants to put to it.
 | `needs`, `forget NUMBER` | Lists the lines nothing could do yet, or drops one. |
 | `delegate WORDS`, `delegate NUMBER` | Asks the teacher about what you want, or about a queued need. |
 | `repair COMMAND` | Asks the teacher to put right a command it wrote. What you find wrong may follow the name. |
+| `key HOST`, `key`, `key HOST forget` | Keeps the key a service wants, lists the hosts, or drops one. The key is asked for and not shown. |
 | `trace` | Shows the judgements of the latest run and where each answer came from. |
 | `trace NUMBER ANSWER` | Sets one of them yourself. Yours comes first from then on. |
 | `trace COMMAND NAME` | Shows every answer on record for one judgement, and the stretches you set. |
@@ -246,6 +247,8 @@ show, and raises `CommandError` with a message the user can act on. What a manif
 - `reads`: fixed paths it may read, such as `/proc`.
 - `data`: its plugin's own folder for what it keeps between runs, for reading or writing.
 - `hosts`: hosts it may fetch pages from. The sandbox has no network; the core fetches for it.
+- `keys`: which of those hosts wants a key, and where it goes in a request: a header, or a
+  parameter of the address. The core adds your key for that host; you give it with `key HOST`.
 - `judges`, `ranges`: the judgements it asks for, and the range a judged value lies in.
 - `asks`: the models it may put a question of its own to, `student` or `teacher`.
 
@@ -263,6 +266,10 @@ lo-s runs commands on your real machine.
 - A command holds only what its manifest declares and what you named on the line. Approval of a
   new command does not rest on reading its code, though the code is shown.
 - Moving and removing are done by the core, on paths you named. `fs.move` never overwrites.
+- A key for a service is kept in `state/keys.json`, readable by you alone. lo-s adds it to a
+  request to the one host it is for, when a command's manifest says that host wants it. The
+  command never holds it, and it is in no record and shown to no model. A service that sends
+  your key back in its answer does hand it to the command that asked.
 - The student runs on your machine. `scripts/serve.sh` has it listen on this machine only.
 - The teacher is remote. With the default setup it is Anthropic's Claude, through your own
   `claude` login, which lo-s never reads or stores. What is sent to it:
@@ -286,8 +293,8 @@ audited how lo-s uses it.
 
 - `state/` holds what the shell records: every answered question (`cases.jsonl`), the queue of
   needs, what commands asked the core for, how each run ended, the teacher's answers, the
-  rules, the lines you typed (`history`), and each plugin's data. It is yours and is ignored by
-  git. `LOS_STATE` points elsewhere.
+  rules, the lines you typed (`history`), the keys you gave (`keys.json`), and each plugin's
+  data. It is yours and is ignored by git. `LOS_STATE` points elsewhere.
 - `plugins/` holds the starter commands. A command the teacher wrote lives in a folder of its own
   named `plugin.verb`, with the words it was written for. Deleting the folder removes the
   command. Those folders are ignored by git too. `LOS_PLUGINS` points elsewhere.

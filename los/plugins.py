@@ -15,6 +15,7 @@ process of its own (see sandbox.py), which is given what the manifest declares a
     reads = ["/proc"]                   # fixed paths it may read
     data = "write"                      # its plugin's data folder: read or write
     hosts = ["api.example.org"]         # hosts it may fetch from, through the core
+    keys = { "api.example.org" = { header = "Authorization", prefix = "Bearer " } }    # where a host wants its key
     judges = ["size"]                   # judgements it asks for, by name
     ranges = { size = [0, 500] }        # for a judged value that is a number in fixed text: lowest and highest
     asks = ["student"]                  # models it may put a question of its own to: student, teacher
@@ -33,6 +34,10 @@ core. A default stands for a path left out, and can be built from other paramete
 The effect is a promise the sandbox keeps. A read command can change nothing. A write command
 can add: to its plugin's data folder, and a path it was given to create. Only a destructive
 command can change or remove what exists.
+
+A host may want a key, and the manifest says where in a request it goes: in a header, with a
+prefix when the service wants one, or in a parameter of the address, as { param = "api_key" }.
+The core adds the user's key for that host. The command never holds it (see keys.py).
 
 A command reaches a model only through the core, and only as its manifest says. A judgement is a
 closed question: one of a few answers for one value. A question of its own is free text, to the
@@ -54,6 +59,9 @@ ACCESS = ("read", "create", "write")
 ROLES = ("student", "teacher")
 NAME = re.compile(r"[a-z][a-z0-9_]*")
 HOST = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+")
+HEADER = re.compile(r"[A-Za-z][A-Za-z0-9-]*")          # a header a key may go in
+PREFIX = re.compile(r"[A-Za-z]+ ")                      # what may stand before the key there, such as "Bearer "
+WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")          # a parameter of an address a key may go in
 
 
 class ManifestError(Exception):
@@ -81,6 +89,7 @@ class Command:
     judges: tuple = ()          # the judgements it asks for, by name
     asks: tuple = ()            # the models it may put a question of its own to
     ranges: dict = dataclasses.field(default_factory=dict)  # judgement -> (lowest, highest) number its value holds
+    keys: dict = dataclasses.field(default_factory=dict)    # host -> where its key goes: header and prefix, or param
 
     @property
     def plugin(self):
@@ -137,7 +146,7 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: a verb is lower-case letters, digits and underscores")
     if not isinstance(entry, dict) or not isinstance(entry.get("params", {}), dict):
         raise ManifestError(f"{name} and its params are tables")
-    _only(entry, {"description", "effect", "reads", "data", "hosts", "judges", "ranges", "asks", "params"}, name)
+    _only(entry, {"description", "effect", "reads", "data", "hosts", "keys", "judges", "ranges", "asks", "params"}, name)
     description, effect = entry.get("description"), entry.get("effect", "read")
     reads, data, hosts = entry.get("reads", []), entry.get("data", ""), entry.get("hosts", [])
     judges, asks, ranges = entry.get("judges", []), entry.get("asks", []), entry.get("ranges", {})
@@ -151,6 +160,10 @@ def _command(plugin, verb, entry, functions, source, written_by):
         raise ManifestError(f"{name}: data is read or write, not {data!r}")
     if not isinstance(hosts, list) or not all(isinstance(host, str) and HOST.fullmatch(host) for host in hosts):
         raise ManifestError(f"{name}: hosts is a list of host names such as api.example.org")
+    keys = entry.get("keys", {})
+    if not isinstance(keys, dict) or not all(host in hosts and _place(place) for host, place in keys.items()):
+        raise ManifestError(f"{name}: keys says, for a host listed in hosts, where its key goes: "
+                            '{ header = "X-Api-Key" }, { header = "Authorization", prefix = "Bearer " } or { param = "api_key" }')
     if not isinstance(judges, list) or not all(isinstance(one, str) and NAME.fullmatch(one) for one in judges):
         raise ManifestError(f"{name}: judges is a list of names in lower-case letters, digits and underscores")
     if not isinstance(asks, list) or not all(isinstance(one, str) and one in ROLES for one in asks):
@@ -183,7 +196,19 @@ def _command(plugin, verb, entry, functions, source, written_by):
     if problem:
         raise ManifestError(f"{name}: commands.py {problem.format(function=f'do_{verb}')}")
     return Command(name, description, params, effect, tuple(reads), data, tuple(hosts), source, written_by,
-                   tuple(judges), tuple(asks), {one: tuple(ends) for one, ends in ranges.items()})
+                   tuple(judges), tuple(asks), {one: tuple(ends) for one, ends in ranges.items()},
+                   {host: dict(place) for host, place in keys.items()})
+
+
+def _place(place):
+    """Whether a manifest says rightly where a key goes: one header, with a prefix or none, or one
+    parameter of the address. Host is not a header a key may go in."""
+    if not isinstance(place, dict) or not all(isinstance(value, str) for value in place.values()):
+        return False
+    if set(place) == {"param"}:
+        return bool(WORD.fullmatch(place["param"]))
+    return ("header" in place and set(place) <= {"header", "prefix"} and bool(HEADER.fullmatch(place["header"]))
+            and place["header"].lower() != "host" and bool(PREFIX.fullmatch(place.get("prefix", "Bearer "))))
 
 
 def _param(name, key, value):
@@ -240,6 +265,9 @@ def touches(command):
                      f"the data lo-s keeps for the {command.plugin} commands.")
     if command.hosts:
         lines.append(f"It may fetch pages from {', '.join(command.hosts)}.")
+    if command.keys:
+        lines.append(f"It sends your key for {', '.join(command.keys)} with each request to it. The command does not "
+                     "see the key.")
     lines.append("It sees no other file of yours and " +
                  ("reaches nothing else on the network." if command.hosts else "has no network."))
     if command.judges:

@@ -73,6 +73,30 @@ class PluginsTest(Folders):
                                       CODE, folder="allowed")
         self.assertIn("x.go", table)
 
+    def test_a_manifest_says_which_host_wants_a_key_and_where_it_goes(self):
+        table, problems = self.plugin(manifest(
+            'hosts = ["api.example.org", "feed.example.org", "example.net"]\n'
+            'keys = { "api.example.org" = { header = "Authorization", prefix = "Bearer " }, '
+            '"feed.example.org" = { param = "api_key" } }'), CODE)
+        self.assertEqual(problems, [])
+        self.assertEqual(table["x.go"].keys, {"api.example.org": {"header": "Authorization", "prefix": "Bearer "},
+                                              "feed.example.org": {"param": "api_key"}})
+        self.assertEqual(plugins.touches(table["x.go"])[1:3], [
+            "It may fetch pages from api.example.org, feed.example.org, example.net.",
+            "It sends your key for api.example.org, feed.example.org with each request to it. The command does not see "
+            "the key."])
+        for number, wrong in enumerate((
+                '"example.net" = { header = "X-Api-Key" }',                 # a host the command may not fetch from
+                '"api.example.org" = { header = "Host" }',
+                '"api.example.org" = { header = "X-Api-Key", param = "key" }',
+                '"api.example.org" = { prefix = "Bearer " }',
+                '"api.example.org" = { header = "X-Api-Key", prefix = "two words " }',
+                '"api.example.org" = { param = "api key" }',
+                '"api.example.org" = "X-Api-Key"')):
+            _, problems = self.plugin(manifest(f'hosts = ["api.example.org"]\nkeys = {{ {wrong} }}').replace('"x"', f'"w{number}"'),
+                                      CODE, folder=f"wrong{number}")
+            self.assertIn("keys says, for a host listed in hosts, where its key goes", problems[-1], wrong)
+
     def test_a_faulty_plugin_is_left_out_and_the_others_load(self):
         faults = {
             "effect": (manifest('effect = "maybe"'), CODE, "effect is one of read, write, destructive"),

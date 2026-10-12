@@ -51,8 +51,9 @@ something it does not do: a wrong command is worse than none.
 question in question. Their answer comes back to you together with their words. Ask only when \
 you cannot answer well without it: every question is another call the user waits for.
 
-"cannot": lo-s cannot do it even with a new command. It needs an account, a payment, hardware \
-or a service that nothing below provides, or it is something a command cannot be. Say why in a \
+"cannot": lo-s cannot do it even with a new command. It takes a payment, hardware, signing in \
+as the user or a service that nothing below can reach, or it is something a command cannot be. \
+Say why in a \
 sentence or two. If a command in the table does part of it, name that command. Do not offer to \
 do something else instead: the user cannot reply to you, and whatever they ask next is a new call.
 
@@ -100,11 +101,18 @@ DATA (from los import DATA), for what it keeps between runs.
 https GET to a listed host. Anything else is refused, and there is no other network. List only \
 the hosts the command needs for what the user asked. Never contact a service to find out where \
 the user is or who they are: take a place or a name as a parameter. Fetch only from what is \
-published for programs to read: an API that needs no key, a feed, a file offered for download. \
-Do not build on a page made for people to read in a browser: it may refuse a program on any day, \
-and the command then stops working. If nothing published for programs gives what is needed \
-without an account or a key, answer cannot and say what is missing. For a command that fetches, \
-name in reason the service it relies on.
+published for programs to read: an API, a feed, a file offered for download. Do not build on a \
+page made for people to read in a browser: it may refuse a program on any day, and the command \
+then stops working. If nothing published for programs gives what is needed, answer cannot and \
+say what is missing. For a command that fetches, name in reason the service it relies on.
+- keys: for a host whose service wants a key, where the key goes in a request: in header, with \
+prefix when the service wants a word before it, such as "Bearer "; or in param, a parameter of \
+the address. lo-s keeps the user's key for that host and adds it to every request the command \
+makes there. The command never sees the key: put none in the code, in a parameter or in an \
+address, and do not ask for one. Use a service that needs no key when one does the job as well. \
+When the command needs a key, say in reason which service it is from, and that getting one may \
+take an account or a payment: the user decides whether to. A check that contacts such a host \
+runs only when the user has set a key for it.
 - judges: the names of the judgements the command asks for. judge(name, question, value, \
 choices), from los, returns the one of choices that fits value. It is for a judgement that no \
 code can make, such as whether a reading is worrying, and never for what code can work out. \
@@ -141,7 +149,7 @@ name must not be one in the table.
 
 What to give in write.
 - plugin, verb, effect, code, and params: each with name and hint, and for a path also path \
-and, when there is one, default. reads, data, hosts, judges, ranges and asks only when the \
+and, when there is one, default. reads, data, hosts, keys, judges, ranges and asks only when the \
 command needs them.
 - descriptions: two or three candidate descriptions of one sentence each, worded differently. \
 The student sees nothing but the table, so the description and the hints are all it goes by. \
@@ -189,6 +197,7 @@ SCHEMA = {
                 "reads": {"type": "array", "items": TEXT},
                 "data": {"type": "string", "enum": ["", "read", "write"]},
                 "hosts": {"type": "array", "items": TEXT},
+                "keys": _things(["host"], host=TEXT, header=TEXT, prefix=TEXT, param=TEXT),
                 "judges": {"type": "array", "items": TEXT},
                 "ranges": _things(["name", "low", "high"], name=TEXT, low=TEXT, high=TEXT),
                 "asks": {"type": "array", "items": {"type": "string", "enum": list(plugins.ROLES)}},
@@ -324,6 +333,11 @@ def manifest(proposal, description, words, teacher):
     rows += [f"{key} = [{', '.join(map(quoted, proposal[key]))}]" for key in ("reads", "hosts", "judges", "asks")
              if proposal.get(key)]
     rows += [f"data = {quoted(proposal['data'])}"] if proposal.get("data") else []
+    if proposal.get("keys"):        # as it came: what is not a place for a key is for the loader to refuse
+        rows.append("keys = { " + ", ".join(
+            f"{quoted(one['host'])} = {{ " + ", ".join(f"{part} = {json.dumps(one[part], ensure_ascii=False)}"
+                                                       for part in ("header", "prefix", "param") if one.get(part)) + " }"
+            for one in proposal["keys"]) + " }")
     if proposal.get("ranges"):      # a number goes in as one; anything else is quoted, and the loader refuses it
         rows.append("ranges = { " + ", ".join(
             f"{one['name']} = [{', '.join(end if _number(end) else quoted(end) for end in (one['low'], one['high']))}]"
@@ -400,6 +414,8 @@ def check(command, wanted, online, minds=None):
         said = said if len(said) <= 300 else said[:300] + " ..."
         if sandbox.OFFLINE in result.text:
             return what, "was not run: it needs the network."
+        if sandbox.NOKEY in result.text:
+            return what, "was not run: it needs a key that is not set."
         if judge.TRIAL in result.text:
             return what, "was not run: it would call the teacher."
         if result.broke:
@@ -513,6 +529,7 @@ def again(command, runs, online, minds=None):
         said = " ".join(result.text.split())
         said = said if len(said) <= 300 else said[:300] + " ..."
         went.append((what, "was not run: it needs the network." if sandbox.OFFLINE in result.text else
+                     "was not run: it needs a key that is not set." if sandbox.NOKEY in result.text else
                      "" if result.ok else f"still fails: {said}"))
     return went
 

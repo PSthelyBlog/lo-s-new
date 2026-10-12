@@ -42,7 +42,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import state
+from . import keys, state
 
 PYTHON = "/usr/bin/python3"     # the interpreter inside the sandbox, where /usr is all there is of the system
 INSIDE = pathlib.Path(__file__).parent / "inside"
@@ -54,6 +54,7 @@ ENVIRONMENT = {"PATH": "/usr/bin", "LANG": "C.UTF-8"}
 LARGEST = 2_000_000             # bytes of a page that fetch hands to a command
 LONGEST = 12_000                # characters of a question a command may put to a model
 OFFLINE = "the network is not used here"
+NOKEY = "wants a key, and none is set"
 
 
 class Refused(Exception):
@@ -304,19 +305,39 @@ def _answer(command, granted, message):
 
 
 def _fetch(command, granted, asked):
-    """Get a page for a command, from a host its manifest lists and no other, over https."""
+    """Get a page for a command, from a host its manifest lists and no other, over https.
+
+    When the manifest says the host wants a key, the user's key for it is added here: in the
+    header it names, or as a parameter of the address. The command gave the address without it
+    and gets the page back, so the key is never in the sandbox. Nothing below puts the address as
+    it was sent into a refusal or a record."""
     url = asked.get("url", "")
     if granted.offline:
         raise Refused(OFFLINE)
     _listed(command, granted, url)
+    host, headers, sent = urllib.parse.urlsplit(url).hostname, {"User-Agent": "lo-s"}, url
+    place = command.keys.get(host)
+    if place:
+        key = keys.held().get(host)
+        if not key:
+            raise Refused(f"{host} {NOKEY}. key {host} sets one")
+        if "param" in place:    # in the place of whatever the command put under that name
+            parts = urllib.parse.urlsplit(url)
+            query = [(name, value) for name, value in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+                     if name != place["param"]] + [(place["param"], key)]
+            sent = urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+        else:
+            headers[place["header"]] = place.get("prefix", "") + key
     try:
-        with urllib.request.build_opener(_Listed(command, granted)).open(
-                urllib.request.Request(url, headers={"User-Agent": "lo-s"}), timeout=20) as response:
+        with urllib.request.build_opener(_Listed(command, granted, host if place else None)).open(
+                urllib.request.Request(sent, headers=headers), timeout=20) as response:
             page = response.read(LARGEST + 1)
     except urllib.error.HTTPError as error:
-        raise Refused(f"{urllib.parse.urlsplit(url).hostname} answered {error.code} {error.reason}")
+        error.close()
+        raise Refused(f"{host} answered {error.code} {error.reason}" + (
+            f". Its key may be wrong or no longer good; key {host} sets another" if place and error.code in (401, 403) else ""))
     except (urllib.error.URLError, OSError) as error:
-        raise Refused(f"{urllib.parse.urlsplit(url).hostname} could not be reached ({getattr(error, 'reason', error)})")
+        raise Refused(f"{host} could not be reached ({getattr(error, 'reason', error)})")
     if len(page) > LARGEST:
         raise Refused(f"the page at {url} is larger than {LARGEST // 1_000_000} MB")
     return page.decode("utf-8", errors="replace")
@@ -334,13 +355,17 @@ def _listed(command, granted, url):
 
 
 class _Listed(urllib.request.HTTPRedirectHandler):
-    """Holds a page that sends the request on elsewhere to the same list of hosts."""
+    """Holds a page that sends the request on elsewhere to the same list of hosts. A request that
+    carries a key is not sent on to any host but its own: the key is for that one."""
 
-    def __init__(self, command, granted):
-        self.command, self.granted = command, granted
+    def __init__(self, command, granted, keyed=None):
+        self.command, self.granted, self.keyed = command, granted, keyed
 
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         _listed(self.command, self.granted, newurl)
+        if self.keyed and urllib.parse.urlsplit(newurl).hostname != self.keyed:
+            raise Refused(f"{self.keyed} sent the request on to another host, and a request that carries a key is "
+                          "not sent on")
         return super().redirect_request(request, fp, code, msg, headers, newurl)
 
 

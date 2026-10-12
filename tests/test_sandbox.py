@@ -53,6 +53,20 @@ hosts = ["api.example.org"]
 [commands.net.params]
 code = "what to try"
 
+[commands.keyed]
+description = "Try something as a command whose host wants a key in a header"
+hosts = ["api.example.org", "open.example.org"]
+keys = {{ "api.example.org" = {{ header = "Authorization", prefix = "Bearer " }} }}
+[commands.keyed.params]
+code = "what to try"
+
+[commands.asked]
+description = "Try something as a command whose host wants a key in the address"
+hosts = ["api.example.org"]
+keys = {{ "api.example.org" = {{ param = "api_key" }} }}
+[commands.asked.params]
+code = "what to try"
+
 [commands.fail]
 description = "End in the way it is told to"
 [commands.fail.params]
@@ -89,6 +103,14 @@ def do_add(path=None, other=None, code=None, also=None):
 
 
 def do_net(code=None):
+    return _attempt(code, None, None)
+
+
+def do_keyed(code=None):
+    return _attempt(code, None, None)
+
+
+def do_asked(code=None):
     return _attempt(code, None, None)
 
 
@@ -377,6 +399,66 @@ class SandboxTest(Folders):
         granted = sandbox.grant(self.table["probe.net"], {})
         with self.assertRaises(sandbox.Refused):        # a listed host that sends the request on elsewhere
             sandbox._Listed(self.table["probe.net"], granted).redirect_request(None, None, 302, "", {}, "https://example.net/")
+
+    def keyed(self, verb, code, page=b"ok", **how):
+        """Run a command whose host wants a key, with the network stood in for. Returns (the
+        result, the requests that went out)."""
+        class Page(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                pass
+
+        answer = {"side_effect": page} if isinstance(page, Exception) else {"return_value": Page(page)}
+        with mock.patch.object(urllib.request.OpenerDirector, "open", **answer) as opened:
+            result = sandbox.run(self.table[f"probe.{verb}"], {"code": code}, **how)
+        return result, [call.args[0] for call in opened.call_args_list]
+
+    def test_the_core_adds_the_key_a_host_wants_and_the_command_never_holds_it(self):
+        from los import keys
+        keys.keep("api.example.org", "s3cret")
+        result, (request,) = self.keyed("keyed", "fetch('https://api.example.org/v1/search?q=ducks')")
+        self.assertEqual((result.text, request.full_url, request.get_header("Authorization")),
+                         ("'ok'", "https://api.example.org/v1/search?q=ducks", "Bearer s3cret"))
+        result, (request,) = self.keyed("asked", "fetch('https://api.example.org/v1/search?q=ducks&api_key=mine')")
+        self.assertEqual((result.text, request.full_url, request.header_items()),      # in the place of what the command put there
+                         ("'ok'", "https://api.example.org/v1/search?q=ducks&api_key=s3cret", [("User-agent", "lo-s")]))
+        # A host of the same command that wants no key gets none.
+        result, (request,) = self.keyed("keyed", "fetch('https://open.example.org/feed')")
+        self.assertEqual((request.full_url, request.header_items()), ("https://open.example.org/feed", [("User-agent", "lo-s")]))
+        # The key is in no record, and nothing the command can reach holds it.
+        self.assertNotIn("s3cret", "".join(path.read_text() for path in state.directory().glob("*.jsonl")))
+        self.assertEqual([call["url"] for call in state.read("calls")][1], "https://api.example.org/v1/search?q=ducks&api_key=mine")
+        result, _ = self.keyed("keyed", "[name for name in os.environ if 's3cret' in os.environ[name]]")
+        self.assertEqual(result.text, "[]")
+        self.assertEqual(oct((state.directory() / "keys.json").stat().st_mode & 0o777), "0o600")
+
+    def test_a_host_that_wants_a_key_is_not_asked_without_one(self):
+        result, requests = self.keyed("keyed", "fetch('https://api.example.org/v1/search?q=ducks')")
+        self.assertEqual((result.ok, result.text, requests),
+                         (False, "api.example.org wants a key, and none is set. key api.example.org sets one", []))
+        self.assertIn(sandbox.NOKEY, result.text)
+        result, requests = self.keyed("keyed", "fetch('https://api.example.org/')", offline=True)
+        self.assertEqual((sandbox.OFFLINE in result.text, requests), (True, []))
+
+    def test_a_key_does_not_go_on_to_another_host_and_a_refused_key_says_so(self):
+        from los import keys
+        keys.keep("api.example.org", "s3cret")
+        command, granted = self.table["probe.keyed"], sandbox.grant(self.table["probe.keyed"], {})
+        request = urllib.request.Request("https://api.example.org/a", headers={"Authorization": "Bearer s3cret"})
+        with self.assertRaisesRegex(sandbox.Refused, "a request that carries a key is not sent on"):
+            sandbox._Listed(command, granted, "api.example.org").redirect_request(
+                request, None, 302, "", {}, "https://open.example.org/b")
+        onward = sandbox._Listed(command, granted, "api.example.org").redirect_request(
+            request, None, 302, "", {}, "https://api.example.org/b")
+        self.assertEqual(onward.full_url, "https://api.example.org/b")      # its own host may send it on to itself
+        refusal = urllib.error.HTTPError("https://api.example.org/a?api_key=s3cret", 401, "Unauthorized", {}, None)
+        self.addCleanup(refusal.close)
+        result, _ = self.keyed("asked", "fetch('https://api.example.org/a')", page=refusal)
+        self.assertEqual(result.text, "api.example.org answered 401 Unauthorized. Its key may be wrong or no longer good; "
+                                      "key api.example.org sets another")
+        self.assertNotIn("s3cret", "".join(path.read_text() for path in state.directory().glob("*.jsonl")))
 
     def test_a_host_that_cannot_be_reached_is_an_error_the_user_can_read(self):
         with mock.patch.object(urllib.request.OpenerDirector, "open", side_effect=urllib.error.URLError("no route")):

@@ -562,6 +562,65 @@ class DelegateTest(Case):
         self.assertEqual(self.shown[-1], "No model is set up as the teacher. Give the teacher role a provider in los.toml.")
 
 
+SEARCH = {
+    "plugin": "web", "verb": "find", "effect": "read", "hosts": ["api.example.org"],
+    "keys": [{"host": "api.example.org", "header": "X-Api-Key"}],
+    "descriptions": ["Search the web for some words"],
+    "params": [{"name": "query", "hint": "the words to search for"}],
+    "code": '''"""Search the web through a service that wants a key."""
+from los import CommandError, fetch
+
+
+def do_find(query=None):
+    if not query:
+        raise CommandError("needs --query")
+    return fetch("https://api.example.org/search?q=" + query)
+''',
+    "lines": [{"line": "search the web for ducks", "args": args(query="ducks")}],
+    "others": [{"line": "list my files", "command": "fs.list"}],
+    "checks": [{"args": [], "expect": "error", "contains": ["--query"]},
+               {"args": args(query="ducks"), "expect": "output", "contains": ["ducks"]}],
+}
+
+
+@needs_sandbox
+class KeyedTest(Case):
+    """A command the teacher wrote for a service that wants a key."""
+
+    shell = DelegateTest.shell
+
+    def test_the_user_is_asked_before_checks_use_a_key_and_a_check_without_one_is_not_run(self):
+        shell = self.shell(write(SEARCH, "It searches through example.org, which wants a key from an account there."),
+                           student_says=[call("web.find", query="ducks"), call("fs.list")], answers=["y", "y"])
+        shell.handle("delegate find things on the web")
+        self.assertEqual(self.asked, ["Its checks would fetch from api.example.org, and send your key for api.example.org. "
+                                      "Let them? [y/N] ", "Install web.find? [y/N] "])
+        proposal = self.shown[3]
+        self.assertIn("Why: It searches through example.org, which wants a key from an account there.\n\n"
+                      "It may fetch pages from api.example.org.\n"
+                      "It sends your key for api.example.org with each request to it. The command does not see the key.\n"
+                      "It sees no other file of yours and reaches nothing else on the network.", proposal)
+        self.assertIn("Checks: 1 of 2 passed.\n  - web.find --query ducks was not run: it needs a key that is not set.", proposal)
+        manifest = (self.plugin_dir / "web.find" / "plugin.toml").read_text()
+        self.assertIn('hosts = ["api.example.org"]\nkeys = { "api.example.org" = { header = "X-Api-Key" } }\n', manifest)
+        self.assertEqual(plugins.load(self.plugin_dir)[0]["web.find"].keys, {"api.example.org": {"header": "X-Api-Key"}})
+        shell.handle("web.find --query ducks")                  # installed, it says what to type to give it its key
+        self.assertEqual(self.shown[-1], "web.find: api.example.org wants a key, and none is set. key api.example.org sets one")
+        shell.handle("key")
+        self.assertTrue(self.shown[-1].startswith("api.example.org: no key is kept, and web.find wants one."))
+
+    def test_the_teacher_is_told_where_a_key_goes_and_never_to_hold_one(self):
+        self.assertIn("lo-s keeps the user's key for that host and adds it to every request", teach.BRIEF)
+        self.assertIn("The command never sees the key: put none in the code, in a parameter or in an address", teach.BRIEF)
+        self.assertNotIn("API that needs no key", teach.BRIEF)
+        both = {**SEARCH, "keys": [{"host": "a.example.org", "header": "Authorization", "prefix": "Bearer "},
+                                   {"host": "b.example.org", "param": "api_key"}]}
+        self.assertIn('keys = { "a.example.org" = { header = "Authorization", prefix = "Bearer " }, '
+                      '"b.example.org" = { param = "api_key" } }', teach.manifest(both, "d", "w", self.teacher))
+        wrong = self.staged({**SEARCH, "keys": [{"host": "elsewhere.example.net", "header": "X-Api-Key"}]})
+        self.assertIn("keys says, for a host listed in hosts, where its key goes", wrong.fault)
+
+
 LOUD = {
     "plugin": "text", "verb": "upper", "effect": "read",
     "descriptions": ["Put a text in capital letters"],

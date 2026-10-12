@@ -89,6 +89,28 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   place, and whatever else it left there is thrown away. If it fails, nothing appears.
 - **Proposed.** `fetch` gets a page for a command with an https GET, from a host its manifest
   lists and from no other. A page that sends the request on to another host is refused.
+- **Proposed.** A service may want a key. A key belongs to a host, and only the core holds it.
+  - The manifest says, under `keys`, which of its hosts wants one and where it goes in a
+    request: in a header, with a prefix such as "Bearer " when the service wants one, or in a
+    parameter of the address.
+  - `key HOST` asks the user for the key at a prompt that does not show it, and keeps it in
+    `state/keys.json`, which only they can read. `key` lists the hosts a key is kept for and
+    those a command wants one for, and `key HOST forget` drops one. A key is never said back,
+    and one typed on the line by mistake is refused and kept out of the history.
+  - At a fetch from such a host the core adds the key, outside the sandbox. The command gave
+    the address without it and gets the page back. With no key set the fetch is refused, and
+    the refusal says what to type.
+  - A request that carries a key is not sent on to any host but its own.
+  - The key is in no record: the log of fetches keeps the address as the command gave it. No
+    model is shown a key.
+  - What a command may touch says that it sends the user's key for a host. A proposal's checks
+    ask before they use the network and the key, and a check that wants a key that is not set
+    is not run.
+- **Open.** A service that sends a key back in its answer hands it to the command that asked.
+  The echo service of the trial does exactly that.
+- **Open.** Only a plain GET with one key is covered. Signing in through a browser, signed
+  requests and anything sent in a body are not.
+- **Open.** A keyed service may charge for each request, and nothing counts them yet.
 - **Proposed.** The effect of a command is `read`, `write` or `destructive`, and each is a promise
   the sandbox keeps, not a label:
   - `read` can change nothing that outlasts the run. Its paths and its data folder are read-only.
@@ -293,10 +315,15 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
 - **Proposed.** The teacher is told never to write a catch-all command, and never to contact a
   service to find out where the user is.
 - **Proposed.** The teacher is told to fetch only from what is published for programs to read:
-  an API that needs no key, a feed, a file offered for download. A page made for people may
-  refuse a program on any day, and the command then stops working. When nothing published for
-  programs gives what is needed without an account or a key, it is to answer cannot and say
-  what is missing. For a command that fetches, its reason names the service it relies on.
+  an API, a feed, a file offered for download. A page made for people may refuse a program on
+  any day, and the command then stops working. When nothing published for programs gives what
+  is needed, it is to answer cannot and say what is missing. For a command that fetches, its
+  reason names the service it relies on.
+- **Proposed.** The teacher is told how a command uses a key: it declares where the key goes,
+  and never holds one, asks for one or writes one into code or an address. It is to prefer a
+  service that needs no key when one does the job as well, and otherwise to say in its reason
+  which service the key is from and that getting one may take an account or a payment. An
+  account with a key is no longer a reason to answer cannot.
 - **Proposed.** `repair COMMAND` sends an installed command a model wrote back to the teacher,
   for one call. What the user finds wrong may follow the name, in their own words.
   - The teacher is shown what `delegate` shows it, and besides: the command as it gave it,
@@ -800,6 +827,20 @@ improvements.
     and 10 of its 10 lines went where they belong.
   - On a yes it took the old one's place, and the old one was kept. Run for real it answered,
     and `improve` raised nothing. All of it took 78 seconds.
+- Keys (`los/keys.py`, `keys` in a manifest, `_fetch` in `los/sandbox.py`, `key` in the shell).
+  Tried on 2026-10-12 in scratch folders with a made-up key and a hand-written command, and no
+  model. Typed at the prompt, the key did not show on the screen or reach the history. An echo
+  service reported the key in the header the manifest named, and in the address for a second
+  command. The record of the two fetches held the addresses without it, and the key file was
+  readable by its owner alone. Before a key was set, the command said what to type.
+- Tried the same day with the teacher, one call, in scratch folders with the starter commands
+  only: "search the web". In 46 seconds it wrote a command on a search service that wants a
+  key, declared the header that service takes it in, and held no key in its code. Its reason
+  named the service and said that a key may take an account or a payment. The question before
+  the checks named the key. Three of its four checks passed and the one that reaches the
+  service was not run, no key being set. All 10 of its lines went where they belong.
+  Installed, it said what to type to give it its key. Against the service itself it has not
+  been run: that takes a real key.
 
 ## What the first build measured
 
