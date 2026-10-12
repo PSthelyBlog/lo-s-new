@@ -436,6 +436,9 @@ ways: a judgement, which is a closed question, and a question of the command's o
 - **Proposed.** Each kind of opportunity has a small function of its own (`los/improve.py`):
   - **a need that keeps being asked**: a waiting line the student found nothing for twice or
     more. What the teacher already turned down is left out.
+  - **a written command that keeps failing**: one a model wrote whose two latest runs or more
+    all ended in a fault, however often it worked before. One that works again is no longer
+    raised, and a starter command never is: nothing here could put it right.
   - **a line the student keeps getting wrong**: a line it answered twice or more with none of
     its answers standing.
   - **a judgement that deserves a rule**: one the student was asked in a run, when enough is on
@@ -461,11 +464,19 @@ ways: a judgement, which is a closed question, and a question of the command's o
   exactly those lines.
 - **Proposed.** `stats` counts what each source answered and the model time that saved, for lines
   and for judgements.
+- **Proposed.** How each run of a command ended is recorded in `state/runs.jsonl`: that it went
+  well, or the values it was given and what it said when it did not. What a run that went well
+  printed is not kept. That record is what the finder of failing commands reads.
+- **Open.** A command that keeps failing is raised, and nothing puts it right yet. An installed
+  command cannot be replaced, and the teacher is shown neither a command's code nor what went
+  wrong with it. Letting it put a written command right is the step this one prepares.
+- **Open.** The finder cannot tell a command at fault from a request that cannot be met, such
+  as a file that already exists. Both are runs that failed, and it says so in either case.
 - **Open.** A line gone astray has no cure but `means` for that one line. The candidate
   descriptions the teacher gave with a command could be tried again for free; that is not built.
 - **Open.** Needs are counted by their exact words, so two wordings of one need are two needs.
-- **Open.** The thresholds (twice, three times, two seconds) are guesses. Only model time is
-  measured, not the user's.
+- **Open.** The thresholds (twice, three times, two seconds, two failed runs) are guesses. Only
+  model time is measured, not the user's.
 
 ## Left out on purpose
 
@@ -736,6 +747,14 @@ improvements.
     the first completed a letter the two names shared. That is how the line editor comes. One
     Tab now completes and lists. At a question, where a stray Tab would then have listed at
     once, it offers nothing.
+- What a failing command showed, on 2026-10-12. A command the teacher had written to search the
+  web read a page meant for people, which began to answer programs with a challenge. The
+  command said so each time and nothing else knew: no run was recorded, `improve` had nothing
+  to raise, and neither lo-s nor the teacher could put the command right.
+- Runs kept and a failing command raised (`ran` and `failing` in `los/improve.py`). Tried the
+  same day in a scratch record with no model: a written command that refused twice was listed
+  by `improve` after the second time and not after the first, and a starter command that
+  failed twice was not listed.
 
 ## What the first build measured
 

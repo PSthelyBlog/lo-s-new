@@ -1,7 +1,8 @@
 """Looking for improvements: what lo-s could do better, found in its own records.
 
 Each finder below looks for one kind of opportunity: something the user keeps asking for and not
-getting, or something a model keeps being asked that a cheaper part could answer. It says what
+getting, a command a model wrote that keeps failing, or something a model keeps being asked that
+a cheaper part could answer. It says what
 happened, how often and how much model time it took, and what to type. Nothing here acts. Most
 of these cost a call to the teacher, so lo-s proposes and the user decides.
 
@@ -15,6 +16,7 @@ finder compares the latest check with the one before.
 """
 import dataclasses
 import datetime
+import itertools
 import json
 import statistics
 
@@ -22,6 +24,8 @@ from . import cases, route, rules, state
 from .parse import count, render
 
 OFTEN = 3       # times the student is asked for a judgement before a rule is worth raising
+FAILING = 2     # runs in a row that a written command has to fail before that is raised
+KEPT = 600      # characters kept of what a run that failed said
 USUAL = 1.0     # seconds a plain-language line took when it was measured, at up to 200 commands
 SLOW = 2.0      # the middle of the latest lines above this is worth raising
 LATEST = 20     # how many of the latest lines that looks at
@@ -87,6 +91,35 @@ def judgements(table):
     return found
 
 
+def ran(name, args, result):
+    """Keep how a run of a command ended: that it went well, or the values it was given and what
+    it said when it did not. What a run that went well printed is not kept."""
+    how = {"ok": True} if result.ok else {"ok": False, "broke": result.broke, "args": args, "said": result.text[:KEPT]}
+    state.append("runs", {"at": datetime.datetime.now().isoformat(timespec="seconds"), "command": name, **how})
+
+
+def failing(table):
+    """A command a model wrote that keeps failing: each of its latest runs ended in a fault,
+    however often it worked before that. One fault may be a value the user got wrong. Several in
+    a row with nothing working in between point at the command, or at what it reaches. A starter
+    command is left out: nothing here could put it right."""
+    runs, found = {}, []
+    for run in state.read("runs"):
+        runs.setdefault(run["command"], []).append(run)
+    for name, mine in runs.items():
+        latest = list(itertools.takewhile(lambda run: not run["ok"], reversed(mine)))      # the newest first
+        if name not in table or not table[name].written_by or len(latest) < FAILING:
+            continue
+        # A command that broke says so with a traceback, and its last line is what went wrong.
+        said = [(run["said"].strip().splitlines() or [""])[-1].strip() if run.get("broke") else " ".join(run["said"].split())
+                for run in latest]
+        found.append(Found(f"{name} failed the last {count(len(latest), 'time')} it ran, since {latest[-1]['at'][:10]}" + (
+            f", each time saying: \"{said[0]}\"." if len(set(said)) == 1 else f". The last time it said: \"{said[0]}\".") +
+            f" A model wrote it, so the fault may be in the command or in what it reaches. help {name} says "
+            "what that is.", f"help {name}", times=len(latest)))
+    return found
+
+
 def needs(table):
     """Something the user keeps asking for that nothing does."""
     found, said = [], cases.teacher_said()
@@ -148,7 +181,7 @@ def routing(table):
                   "for a large table is not built.", seconds=(middle - USUAL) * len(took))]
 
 
-FINDERS = (needs, lines, judgements, examples, routing)
+FINDERS = (needs, failing, lines, judgements, examples, routing)
 
 
 def find(table):

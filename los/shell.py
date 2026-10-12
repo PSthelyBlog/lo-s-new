@@ -67,7 +67,8 @@ BUILTINS = {
             "judgement asks the rule before the student. When too little is on record, it first offers to put "
             "values from across the judgement's range to the student, which is free.",
     "improve": "improve lists what lo-s could do better, found in its own records: what you keep asking for and "
-               "not getting, lines the student keeps answering in a way you do not take, judgements a rule could make. "
+               "not getting, a written command that keeps failing, lines the student keeps answering in a way you do "
+               "not take, judgements a rule could make. "
                "What cost you something comes first, then what took the most model time. Each comes with what to "
                "type. improve lines puts every written command's own example lines to the student again.",
     "stats": "stats shows how many plain-language lines memory, the student and the teacher answered, the model "
@@ -916,6 +917,7 @@ class Shell:
 
     def run(self, command, args):
         result = self.runner(command, args, minds=self.minds)
+        improve.ran(command.name, args, result)     # how it ended is kept, so that one that keeps failing is seen
         if result.broke:
             self.out(Said(Fault(f"{command.name} broke. The fault is in the command, not in what you typed.\n"),
                           Exact(result.text)))

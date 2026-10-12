@@ -5,6 +5,7 @@ import json
 
 from los import cases, improve, plugins, rules, state
 from los.models import ModelUnavailable
+from los.sandbox import Result
 from los.shell import Shell
 from tests.helpers import NONE, Folders, Scripted, call, needs_sandbox, table
 
@@ -224,3 +225,66 @@ class WordTest(Folders):
         shell.handle("improve lines")
         self.assertEqual(self.shown[-1], "No model is set up as the student, which these lines are put to.")
         self.assertEqual(state.read("line_checks"), [])
+
+
+WRITTEN = plugins.Command("web.search", "Search the web", {"query": plugins.Param()}, written_by="scripted-teacher")
+REFUSED = "the search service sent no results; it may be refusing automated requests, try again later"
+
+
+class FailingTest(Folders):
+    """A command a model wrote that keeps failing."""
+
+    table = {**TABLE, "web.search": WRITTEN}
+
+    def ran(self, name="web.search", said=None, broke=False, **args):
+        improve.ran(name, args, Result(said or "found it", ok=said is None, broke=broke))
+
+    def test_how_a_run_ended_is_kept_with_what_it_was_given_and_said_when_it_failed(self):
+        self.ran(query="ducks")
+        self.ran(said=REFUSED, query="last 5 headlines")
+        well, badly = state.read("runs")
+        self.assertEqual({key: well[key] for key in well if key != "at"}, {"command": "web.search", "ok": True})
+        self.assertEqual({key: badly[key] for key in badly if key != "at"}, {
+            "command": "web.search", "ok": False, "broke": False, "args": {"query": "last 5 headlines"}, "said": REFUSED})
+        self.assertRegex(badly["at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+
+    def test_a_written_command_whose_latest_runs_all_failed_is_raised(self):
+        self.ran(query="ducks")
+        self.ran(said=REFUSED, query="last 5 headlines")
+        self.assertEqual(improve.failing(self.table), [])       # once may be a value the user got wrong
+        self.ran(said=REFUSED, query="today's news")
+        found, = improve.failing(self.table)
+        today = datetime.date.today().isoformat()
+        self.assertEqual((found.text, found.do, found.cost, found.times), (
+            f'web.search failed the last 2 times it ran, since {today}, each time saying: "{REFUSED}". A model wrote '
+            "it, so the fault may be in the command or in what it reaches. help web.search says what that is.",
+            "help web.search", "", 2))
+        self.ran(query="ducks")                                 # it works again, and what went before is over
+        self.assertEqual(improve.failing(self.table), [])
+
+    def test_what_it_said_last_is_given_when_it_did_not_say_the_same_each_time_and_a_traceback_by_its_last_line(self):
+        self.ran(said="no place is called Xyzzy", query="Xyzzy")
+        self.ran(said="Traceback (most recent call last):\n  File \"commands.py\", line 3\nKeyError: 'results'\n", broke=True)
+        found, = improve.failing(self.table)
+        self.assertIn("failed the last 2 times it ran", found.text)
+        self.assertIn(". The last time it said: \"KeyError: 'results'\". A model wrote it", found.text)
+
+    def test_a_starter_command_and_a_command_that_is_gone_are_not_raised(self):
+        for _ in range(3):
+            self.ran("fs.list", said="/nope is not a directory", path="/nope")
+            self.ran("old.thing", said="it is gone")
+            self.ran(said=REFUSED, query="x")
+        self.assertEqual([found.do for found in improve.failing(self.table)], ["help web.search"])
+        self.assertEqual(improve.failing(TABLE), [])
+
+    def test_the_shell_keeps_every_run_and_improve_lists_the_command(self):
+        shown = []
+        results = [Result("1. a result"), Result(REFUSED, ok=False), Result(REFUSED, ok=False)]
+        shell = Shell(self.table, lambda question: "", shown.append, lambda command, args, minds=None: results.pop(0))
+        for query in ("ducks", "headlines", "news"):
+            shell.handle(f"web.search --query {query}")
+        self.assertEqual([(run["ok"], run.get("args")) for run in state.read("runs")],
+                         [(True, None), (False, {"query": "headlines"}), (False, {"query": "news"})])
+        shell.handle("improve")
+        self.assertTrue(shown[-2].startswith("1. web.search failed the last 2 times it ran, since "))
+        self.assertTrue(shown[-2].endswith("\n   help web.search   (free)"))

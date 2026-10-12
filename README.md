@@ -123,8 +123,8 @@ their own lines are, the teacher turns that into a rule, and in the end no model
   `rule` has the teacher turn the answers on record into a small function, which is tried on
   every one of them before you are asked to use it.
 - **`improve` lists what the records show could be better**: something you keep asking for, a
-  line the student keeps getting wrong, a judgement a rule could make. Each comes with what to
-  type and what it costs. lo-s proposes and you decide.
+  written command that keeps failing, a line the student keeps getting wrong, a judgement a rule
+  could make. Each comes with what to type and what it costs. lo-s proposes and you decide.
 
 ## Try it
 
@@ -278,9 +278,9 @@ audited how lo-s uses it.
 ## Where things are kept
 
 - `state/` holds what the shell records: every answered question (`cases.jsonl`), the queue of
-  needs, what commands asked the core for, the teacher's answers, the rules, the lines you
-  typed (`history`), and each plugin's data. It is yours and is ignored by git. `LOS_STATE`
-  points elsewhere.
+  needs, what commands asked the core for, how each run ended, the teacher's answers, the
+  rules, the lines you typed (`history`), and each plugin's data. It is yours and is ignored by
+  git. `LOS_STATE` points elsewhere.
 - `plugins/` holds the starter commands. A command the teacher wrote lives in a folder of its own
   named `plugin.verb`, with the words it was written for. Deleting the folder removes the
   command. Those folders are ignored by git too. `LOS_PLUGINS` points elsewhere.
