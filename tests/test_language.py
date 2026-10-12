@@ -565,3 +565,66 @@ class OwnWordTest(ShellCase):
         shell = self.shell(NONE)
         shell.handle("need a way to resize pictures")
         self.assertEqual((self.asked, self.student.calls), ([], 1))
+
+
+class NamedTest(ShellCase):
+    """A line that starts with a command's name and goes on in plain words."""
+
+    USAGE = "Usage: fs.list [--path VALUE] [--sort-by VALUE]"
+
+    def test_the_student_fills_in_that_commands_values_and_the_choice_is_shown_like_any_other(self):
+        shell = self.shell(call("fs.list", path="~", sort_by="size"), answers=[""])
+        shell.handle("fs.list my home folder by size")
+        self.assertEqual((self.shown, self.asked), (["→ fs.list --path ~ --sort-by size", "ran fs.list"], ["Run it? [Y/n] "]))
+        # The student was shown that command alone, and the words after its name.
+        self.assertEqual(self.student.user, "my home folder by size")
+        self.assertIn("fs.list", self.student.system)
+        self.assertNotIn("note.add", self.student.system)
+        self.assertEqual(recorded(), [("fs.list my home folder by size", "fs.list", "student", "accepted")])
+        shell.handle("fs.list my home folder by size")          # the whole line is what is remembered
+        self.assertEqual(self.shown[-2:], ["→ fs.list --path ~ --sort-by size  (remembered)", "ran fs.list"])
+        self.assertEqual(self.student.calls, 1)
+
+    def test_an_apostrophe_in_the_words_makes_no_difference(self):
+        shell = self.shell(call("note.add", text="today's list"), answers=["y"])
+        shell.handle("note.add today's list")
+        self.assertEqual((self.student.user, self.ran.calls), ("today's list", [("note.add", {"text": "today's list"})]))
+        self.assertNotIn("fs.list", self.student.system)
+
+    def test_what_is_typed_as_parameters_is_held_to_how_parameters_are_typed(self):
+        shell = self.shell()
+        shell.handle("fs.list --colour red")
+        self.assertEqual(self.shown[-1], "fs.list has no parameter --colour\n" + self.USAGE)
+        shell.handle("fs.list --path")
+        self.assertEqual(self.shown[-1], "fs.list: --path needs a value\n" + self.USAGE)
+        shell.handle("fs.list --path /tmp by size")
+        self.assertEqual(self.shown[-1], "fs.list: expected a --parameter, got 'by'\n" + self.USAGE)
+        shell.handle("fs.list")
+        self.assertEqual((self.student.calls, self.ran.calls), (0, [("fs.list", {})]))
+
+    def test_the_student_cannot_say_that_nothing_fits_a_command_the_user_named(self):
+        shell = self.shell(NONE, call("note.add", text="x"), call("fs.list"), answers=[""])
+        shell.handle("fs.list colourless green ideas")          # none, and another command, are not answers it may give
+        self.assertEqual((self.student.calls, self.shown), (3, ["→ fs.list", "ran fs.list"]))
+        self.assertIn("The command is their choice and is not in question", self.student.system)
+        self.assertEqual((self.student.schema["properties"]["call"]["anyOf"][0]["properties"]["command"],
+                          len(self.student.schema["properties"]["call"]["anyOf"])), ({"const": "fs.list"}, 1))
+        self.assertEqual((cases.waiting(), recorded()[-1][1:]), ({}, ("fs.list", "student", "accepted")))
+
+    def test_nobody_to_read_the_words_says_how_the_command_is_typed(self):
+        shell = self.shell(ModelUnavailable("nothing answers at http://127.0.0.1:8080/v1"))
+        shell.handle("fs.list my home folder")
+        self.assertEqual(self.shown[-1], "fs.list: expected a --parameter, got 'my', and the student, which reads plain "
+                                         "words, did not answer: nothing answers at http://127.0.0.1:8080/v1.\n" + self.USAGE)
+        shell.student = None
+        shell.handle("fs.list my home folder")
+        self.assertEqual(self.shown[-1], "fs.list: expected a --parameter, got 'my'\n" + self.USAGE)
+        self.assertEqual(self.ran.calls, [])
+
+    def test_what_the_user_corrected_for_another_line_is_still_put_to_use(self):
+        shell = self.shell(call("fs.list", path="home"), call("fs.list", path="home"), answers=["e", ""],
+                           edits=["fs.list --path ~"])
+        shell.handle("what is in my home folder")               # corrected once, on the line
+        shell.handle("fs.list my home folder")
+        self.assertEqual(self.shown[-3:-1], ['The student gave fs.list --path home. You corrected that for "what is in my '
+                                             'home folder".', "→ fs.list --path ~  (your correction)"])

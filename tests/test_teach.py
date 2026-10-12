@@ -393,7 +393,7 @@ class DelegateTest(Case):
                                       "itself. help improve says what it does.", "Not sent."])
         self.assertEqual(self.asked, ['Send "improve" to scripted-teacher as something you need all the same? That is '
                                       "one call. [y/N] "])
-        for words in ("improve lines", "rule sys.health temperature", "forget 3", "help trace", "needs"):
+        for words in ("improve lines", "forget 3", "help trace", "needs", "repair", "rule"):
             shell.handle(f"delegate {words}")                   # nobody is there to answer, so nothing is sent
             self.assertEqual(self.shown[-1], "Not sent.", words)
         self.assertEqual((self.teacher.calls, state.read("delegations")), (0, []))
@@ -401,6 +401,17 @@ class DelegateTest(Case):
         shell.handle("delegate improve")
         self.assertEqual((self.teacher.calls, self.shown[-2:]), (1, ["Asking scripted-teacher about: improve",
                                                                      "lo-s cannot do this: It says too little."]))
+
+    def test_a_word_that_asks_the_teacher_itself_is_done_and_not_sent_as_a_need(self):
+        shell = self.shell()
+        shell.handle("delegate rule sys.health temperature")
+        self.assertEqual(self.shown, ["rule asks the teacher itself, so it is done as: rule sys.health temperature",
+                                      "No rule for temperature in sys.health yet: nothing is on record for it yet."])
+        shell.handle("delegate repair fs.list it is slow")
+        self.assertEqual(self.shown[-2:], ["repair asks the teacher itself, so it is done as: repair fs.list it is slow",
+                                           "fs.list is a starter command and not one a model wrote, so it is not the "
+                                           "teacher's to put right."])
+        self.assertEqual((self.asked, self.teacher.calls, state.read("delegations")), ([], 0, []))
 
     def test_words_that_only_start_like_a_word_of_lo_s_are_sent_as_they_are(self):
         shell = self.shell({"answer": "cannot", "reason": "No."}, {"answer": "cannot", "reason": "No."})
@@ -747,6 +758,16 @@ class RepairTest(Case):
         self.assertIn("cannot be installed. It is named text.loud, and it was to take the place of text.upper.", self.shown[9])
         self.assertEqual(self.shown[-1][:13], "Not replaced.")
         self.assertEqual((self.teacher.calls, sorted(self.table)), (2, sorted(plugins.load(self.plugin_dir)[0])))
+
+    def test_delegate_before_the_word_comes_to_the_same(self):
+        shell = self.failing({"answer": "cannot", "reason": "Its service is gone."})
+        shell.handle("delegate repair text.upper it never answers")
+        self.assertEqual(self.shown[2], "repair asks the teacher itself, so it is done as: repair text.upper it never answers")
+        self.assertEqual(self.shown[-2:], ["Asking scripted-teacher to put text.upper right.",
+                                           "text.upper stays as it is. scripted-teacher says it cannot be put right: Its "
+                                           "service is gone."])
+        self.assertIn("- The user says: it never answers", self.teacher.user)
+        self.assertEqual((self.teacher.calls, state.read("delegations")[-1]["repair"]), (1, "text.upper"))
 
     def test_only_a_command_a_model_wrote_and_only_with_something_to_go_on(self):
         shell = self.shell()

@@ -99,6 +99,9 @@ their own lines are, the teacher turns that into a rule, and in the end no model
   yourself what a line means. Answering `e` to the question does that in one go: the command
   is put on the line for you to correct. The student often has the right command with one
   wrong value.
+- **A command's name can be followed by plain words**, as in `fs.find files bigger than 100 MB`.
+  The command is then your choice, and the student only fills in its values, which you see
+  before it runs.
 - **What you settled for one line helps with the next.** When the student gives an answer you
   corrected before, your correction is shown in its place, with the line you made it for. When
   the student finds nothing and a settled line is much like the one you typed, that line's

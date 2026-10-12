@@ -158,6 +158,18 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   other capitals. Before the student is asked, the user is asked whether they meant that word.
   Enter says yes. No reads the line as plain language, as before. A line they settled is not
   asked about, nor is a word a command is named with, such as `status`.
+- **Proposed.** A line may name its command and say the rest in plain words, as in "fs.find
+  files bigger than 100 MB". Where the word after the name does not start a parameter, the
+  line is read that way and not refused as mistyped.
+  - Which command is meant is the user's choice. The student is shown that command alone and
+    the words after its name, and is asked only for its parameters. It cannot answer that
+    nothing fits, whatever the description says about when to use the command.
+  - What it gives is shown, asked about, recorded and remembered like any other choice of the
+    student's, under the whole line as typed. A correction the user made for another line is
+    still shown in its place.
+  - With no student, or none answering, the line is what it was before: a command typed
+    wrongly, with how it is typed.
+  - What is typed as parameters is held to how parameters are typed.
 - **Proposed.** What is shown before a question is the command in full: a path left out is filled
   in, and every path is absolute, with the home folder written as `~`. That line is what will
   run and all that the command can touch. What is remembered is what was said, so a relative
@@ -277,6 +289,9 @@ it taught. Each item below is marked **Decided** (chosen by the project owner), 
   a need and could only ask what was meant. lo-s says the word is its own and asks before the
   call, and only a clear yes sends it. Words that merely start like one, such as "help me
   rename my photos", are sent as they are. So is a queued need sent by its number.
+- **Proposed.** `repair` and `rule` ask the teacher themselves, and show it what it needs to
+  see. So `delegate repair COMMAND` and `delegate rule COMMAND NAME` are done as that word,
+  after a line that says so, and are not sent as a need.
 - **Proposed.** The teacher is told how lo-s works, the contract for commands, the command
   table, which models fill which role and how they are reached, and one plugin as an example of
   the style. It returns text only.
@@ -847,6 +862,17 @@ improvements.
   screen showed the change of host against what the installed command was held to. Replaced,
   the command said that no key was set, the owner gave one with `key`, and the next run
   listed five results from the service.
+- A command's name followed by plain words (`fill` in `los/route.py`, `interpret` in
+  `los/shell.py`), and `delegate` before a word that asks the teacher itself. The owner's use
+  had shown the first as a line read two ways: refused as mistyped, yet read by the student
+  when an apostrophe in it kept it from parsing as a command.
+  - Tried on 2026-10-12 with the student and a scratch record. A first cut asked the student
+    the usual way with only that command in the table, and for a command whose description
+    says when not to use it, it answered that nothing fitted. Asked for the parameters alone,
+    with no way to refuse, it gave sensible values for nine lines of eight commands in 1.1 to
+    2.3 seconds each. For words that said nothing usable it left the parameters out.
+  - This shows that the student fills such a line in, not that its values are right: each is
+    shown before it runs.
 
 ## What the first build measured
 

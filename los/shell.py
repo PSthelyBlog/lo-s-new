@@ -203,6 +203,12 @@ class Shell:
         elif words[0] == "improve":
             self.look(words[1:])
         else:
+            named = self.table.get(words[0])
+            if named and len(words) > 1 and not words[1].startswith("--"):
+                # The command is named, and what follows is said in plain words. Which command is
+                # meant is not the student's to choose then: it fills in that command's values.
+                self.interpret(line, named)
+                return True
             try:
                 parsed = parse(line, self.table)
             except UsageError as error:
@@ -236,12 +242,17 @@ class Shell:
                 return
         self.run(command, args)
 
-    def interpret(self, line):
+    def interpret(self, line, named=None):
         """Plain language. A line the user settled before is answered from memory; otherwise the
         student is asked. What the user settled for other lines is put to use in two places: where
         the student gives an answer they corrected before, and where it finds nothing. Whatever
-        the choice, it is shown as a typed command before anything runs."""
+        the choice, it is shown as a typed command before anything runs.
+
+        `named` is the command a line starts with when plain words follow its name. The student
+        is then shown that command alone and the words after its name, and fills in its values:
+        it cannot say that nothing fits, since the command is the user's choice."""
         self.said, doubted = line, False
+        typed = (f"{named.name}: expected a --parameter, got {line.split()[1]!r}", f"Usage: {usage(named)}") if named else ()
         case = cases.remembered(line, self.table)
         if case:
             answer, source = case["answer"], "memory"
@@ -251,14 +262,22 @@ class Shell:
             choice = command.effect == "read" or self.agree(command, args)
             cases.record("line", line, answer, "memory", "accepted" if choice is True else "declined")
         else:
+            if not self.student and named:      # nobody to read plain words, so it is a command typed wrongly
+                self.out("\n".join(typed))
+                return
             if not self.student:
                 self.out("That is not a command, and no model is set up to read plain language. Give the student "
                          "role a provider in los.toml, or type help to list the commands.")
                 return
             try:
                 with self.wait(f"Asking {self.student.model}", kept=False):
-                    choice = route.ask(self.student, self.table, line)
+                    choice = (route.fill(self.student, named, line.split(None, 1)[1]) if named else
+                              route.ask(self.student, self.table, line))
             except ModelUnavailable as error:
+                if named:
+                    self.out(Said(Fault(f"{typed[0]}, and the student, which reads plain words, did not answer: {error}.\n"),
+                                  Aside(typed[1])))
+                    return
                 self.out(Said(Fault("That is not a command, and the student, which reads plain language, did not "
                                     f"answer: {error}.\n"),
                               Aside("If it is the local model, scripts/serve.sh starts it. Structured commands still "
@@ -411,6 +430,12 @@ class Shell:
             self.out("No model is set up as the teacher. Give the teacher role a provider in los.toml.")
             return
         first, *rest = words.split()
+        if number is None and first in ("repair", "rule") and rest and rest[0] in self.table:
+            # That word asks the teacher itself, and shows it what it needs to see. Sent as a need,
+            # the words would be a call spent on a question back.
+            self.out(f"{first} asks the teacher itself, so it is done as: {words}")
+            self.handle(words)
+            return
         if number is None and first in BUILTINS and (
                 not rest or rest[0] in self.table or rest[0] in BUILTINS or rest[0].isdigit() or rest[0] == "lines"):
             # What follows delegate is something lo-s does itself. Sent as it is, the teacher gets

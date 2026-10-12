@@ -4,6 +4,10 @@ The student is shown the instructions, then the command table, then the line. Wh
 same from one line to the next comes first, so that the server can reuse the work it did on it.
 Its answer is limited to one command with that command's own parameters, or none.
 
+A line may also name its command and say the rest in plain words. Which command is meant is
+then the user's choice, and the student is asked only for that command's parameters: it is shown
+that command alone, and its answer cannot be none.
+
 The answer is a suggestion. The shell shows it and the user decides, and nothing here expects
 the student to say the same thing twice.
 """
@@ -28,6 +32,21 @@ Reply with JSON of the form {"call": {"command": "<name>", "args": {"<parameter>
 or {"call": {"command": "none"}} when nothing fits.
 
 Commands, one per line as: name | what it does | parameters
+"""
+
+
+FILLING = """\
+You fill in the parameters of one command of a command-line operating system. The user typed \
+the command's name and then said the rest in plain words, which you receive. The command is \
+their choice and is not in question: whatever its description says about when to use it, it is \
+the command that runs.
+
+For args, use only the parameters listed for the command, take the values from the user's \
+words, and leave out parameters the words say nothing about.
+
+Reply with JSON of the form {"call": {"command": "<name>", "args": {"<parameter>": "<value>"}}}.
+
+The command, as: name | what it does | parameters
 """
 
 
@@ -63,6 +82,15 @@ def schema(table):
              for command in sorted(table.values(), key=lambda c: c.name)]
     forms.append(form({"command": {"const": "none"}}))
     return form({"call": {"anyOf": forms}})
+
+
+def fill(model, command, words):
+    """Ask the student for the parameters of a command the user named, from the plain words that
+    followed its name. The answer is that command with some of its parameters, and never none."""
+    only = schema({command.name: command})
+    only["properties"]["call"]["anyOf"].pop()       # the form for none
+    output, meta = complete_valid(model, FILLING + table_text({command.name: command}), words, only)
+    return Choice(command.name, {name: value for name, value in output["call"]["args"].items() if value.strip()}, meta)
 
 
 def ask(model, table, line):
